@@ -32,18 +32,17 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release & Debug APKs
-        run: ./gradlew :app:assembleRelease :app:assembleDebug --stacktrace
+      - name: Build Optimized Release APK
+        run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Prepare APK Output
         run: |
           mkdir -p apk-dist
-          find app/build/outputs/apk/release/ -type f -name "*.apk" -exec cp {} apk-dist/Prism-v1.8.6-Optimized-Release.apk \;
-          find app/build/outputs/apk/debug/ -type f -name "*.apk" -exec cp {} apk-dist/Prism-v1.8.6-Optimized-Debug.apk \;
+          find app/build/outputs/apk/release/ -type f -name "*.apk" -exec cp {} apk-dist/Prism-v1.8.6-Optimized.apk \;
           ls -lh apk-dist/
 
-      - name: Upload Optimized APKs
+      - name: Upload Optimized APK
         uses: actions/upload-artifact@v4
         with:
-          name: Prism-Optimized-APKs
-          path: apk-dist/*.apk
+          name: Prism-Optimized-APK
+          path: apk-dist/Prism-v1.8.6-Optimized.apk
