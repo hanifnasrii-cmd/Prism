@@ -166,6 +166,13 @@ fun ThinSlider(
     val outline = remember(shape != null) { if (shape != null) BlendBarPath() else null }
     // The strands' paths, rebuilt in place each frame rather than made anew.
     val strands = remember { List(RIBBON_STRANDS.size) { androidx.compose.ui.graphics.Path() } }
+    val spectrumCache = remember {
+        object {
+            var width = -1f
+            var stops: List<Pair<Float, Color>>? = null
+            var brush: Brush? = null
+        }
+    }
     val haptics = rememberHaptics()
     val marksNow by androidx.compose.runtime.rememberUpdatedState(marks)
     val quietNow by androidx.compose.runtime.rememberUpdatedState(quietMarks)
@@ -213,7 +220,15 @@ fun ThinSlider(
             val r = CornerRadius(size.height / 2f)
             val filled = size.width * value.coerceIn(0f, 1f)
             // The player is always dark: White light's white (not its mid grey) on it (Reddit: "white is giving gray").
-            val brush = fill ?: if (spectrum) Brush.horizontalGradient(*com.prism.music.ui.theme.PrismTokens.spectrumColors(true).toTypedArray(), startX = 0f, endX = size.width) else null
+            val brush = fill ?: if (spectrum) {
+                val stops = com.prism.music.ui.theme.PrismTokens.spectrumColors(true)
+                if (spectrumCache.width != size.width || spectrumCache.stops != stops || spectrumCache.brush == null) {
+                    spectrumCache.width = size.width
+                    spectrumCache.stops = stops
+                    spectrumCache.brush = Brush.horizontalGradient(*stops.toTypedArray(), startX = 0f, endX = size.width)
+                }
+                spectrumCache.brush
+            } else null
             if (wave != null && wave.isNotEmpty()) {
                 // The waveform: a bar per point, its height the song's loudness there; the played part in the fill.
                 val step = size.width / wave.size
@@ -462,10 +477,17 @@ fun PlayerScrubber(positionMs: Long, durationMs: Long, centerLabel: @Composable 
         Box(Modifier.fillMaxWidth().offset(y = (-9).dp).heightIn(min = 16.dp)) {
             val elapsed = settings.playerTimes == com.prism.music.data.prefs.PlayerTimes.BOTH || settings.playerTimes == com.prism.music.data.prefs.PlayerTimes.ELAPSED
             val left = settings.playerTimes == com.prism.music.data.prefs.PlayerTimes.BOTH || settings.playerTimes == com.prism.music.data.prefs.PlayerTimes.LEFT
+            val shownMs = (shown * duration).toLong()
+            val shownSec = shownMs / 1000L
+            val remSec = (duration - shownMs) / 1000L
+            val elapsedText = remember(shownSec) { formatTime(shownSec * 1000L) }
+            val rightText = remember(showLength, duration, remSec) {
+                if (showLength) formatTime(duration) else "−" + formatTime(remSec * 1000L)
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                if (elapsed) Text(formatTime((shown * duration).toLong()), style = times, color = Color.White.copy(alpha = 0.55f)) else Spacer(Modifier.width(1.dp))
+                if (elapsed) Text(elapsedText, style = times, color = Color.White.copy(alpha = 0.55f)) else Spacer(Modifier.width(1.dp))
                 if (left) Text(
-                    if (showLength) formatTime(duration) else "−" + formatTime(duration - (shown * duration).toLong()),
+                    rightText,
                     style = times, color = Color.White.copy(alpha = 0.55f),
                     modifier = Modifier
                         .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))

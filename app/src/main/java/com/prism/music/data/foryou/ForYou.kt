@@ -14,6 +14,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -39,7 +40,7 @@ data class Mix(
     val songs: List<Song>,
 ) {
     /** Up to four different covers for its picture. */
-    val covers: List<String> get() = songs.mapNotNull { it.thumbnail }.distinct().take(4)
+    val covers: List<String> = songs.asSequence().mapNotNull { it.thumbnail }.distinct().take(4).toList()
 }
 
 /**
@@ -63,12 +64,18 @@ class ForYou(private val c: AppContainer) {
      * The mixes, read once per change and kept (null until the first read). Their songs are stored as JSON; decoding a
      * few hundred songs happened on the main thread every time Made for you scrolled back onto Home (1.7.4).
      */
-    val mixes: StateFlow<List<Mix>?> = c.db.mixes().allFlow().map { list -> list.filterNot { Discover.isDiscover(it.id) }.map(::toMix).sortedBy(::order) }
+    val mixes: StateFlow<List<Mix>?> = c.db.mixes().allFlow()
+        .map { list -> list.filterNot { Discover.isDiscover(it.id) } }
+        .distinctUntilChanged()
+        .map { list -> list.map(::toMix).sortedBy(::order) }
         .flowOn(Dispatchers.Default)
         .stateIn(c.scope, SharingStarted.Eagerly, null)
 
     /** New to you and Deep cuts ([Discover]): their own sections on Home, not part of Made for you. Read once anything looks. */
-    val discovered: StateFlow<Map<String, Mix>> = c.db.mixes().allFlow().map { list -> list.filter { Discover.isDiscover(it.id) }.map(::toMix).associateBy { it.id } }
+    val discovered: StateFlow<Map<String, Mix>> = c.db.mixes().allFlow()
+        .map { list -> list.filter { Discover.isDiscover(it.id) } }
+        .distinctUntilChanged()
+        .map { list -> list.map(::toMix).associateBy { it.id } }
         .flowOn(Dispatchers.Default)
         .stateIn(c.scope, SharingStarted.Lazily, emptyMap())
 

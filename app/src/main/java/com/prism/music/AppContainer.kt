@@ -71,6 +71,11 @@ class PrismApp : Application(), coil3.SingletonImageLoader.Factory {
                 add(com.prism.music.data.OfflineArtInterceptor { if (::container.isInitialized) container.artwork else null })
                 add(com.prism.music.data.DataSaverInterceptor { ::container.isInitialized && container.dataSaving() })
             }
+            .memoryCache {
+                coil3.memory.MemoryCache.Builder()
+                    .maxSizePercent(context, if (com.prism.music.data.DevicePower.mayBeSlow(context)) 0.12 else 0.20)
+                    .build()
+            }
             .diskCache {
                 coil3.disk.DiskCache.Builder()
                     .directory(File(context.cacheDir, "image_cache").absolutePath.toPath())
@@ -972,7 +977,9 @@ class AppContainer(val app: Application) {
      */
     fun yieldToPlaying(id: String?) {
         // Called as a song changes: the player's "loading" reaches this side a moment after the change itself.
-        Thread.sleep(250)
+        if (player.buffering.value || !player.isPlaying.value || player.positionMs.value < 2_000L) {
+            Thread.sleep(250)
+        }
         val until = android.os.SystemClock.elapsedRealtime() + YIELD_MS
         while (player.buffering.value && (id == null || player.currentSong.value?.id != id) && android.os.SystemClock.elapsedRealtime() < until) {
             Thread.sleep(150)

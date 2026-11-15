@@ -33,7 +33,12 @@ data class Song(
      */
     val isUpload: Boolean = false,
 ) {
-    val artistText: String get() = artists.joinToString(", ") { it.name }.ifBlank { UNKNOWN_ARTIST }
+    @kotlinx.serialization.Transient
+    val artistText: String = when (artists.size) {
+        0 -> UNKNOWN_ARTIST
+        1 -> artists[0].name.ifBlank { UNKNOWN_ARTIST }
+        else -> artists.joinToString(", ") { it.name }.ifBlank { UNKNOWN_ARTIST }
+    }
     val primaryArtist: String get() = artists.firstOrNull()?.name ?: ""
     /** A music file on the phone (Library → Local music), not a YouTube Music song: it plays from the file. */
     val isLocal: Boolean get() = id.startsWith(LOCAL_PREFIX)
@@ -381,12 +386,17 @@ fun formatDuration(sec: Int): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
+private val DURATION_WORDS_REGEX = Regex("\\d+\\s*(hr|min|sec)")
+private val DURATION_HR_REGEX = Regex("(\\d+)\\s*hr")
+private val DURATION_MIN_REGEX = Regex("(\\d+)\\s*min")
+private val DURATION_SEC_REGEX = Regex("(\\d+)\\s*sec")
+
 fun parseDuration(text: String?): Int {
     if (text.isNullOrBlank()) return 0
     // Episodes give their length in words: "2 hr 54 min", "47 min", "1 hr", "35 sec".
-    if (!text.contains(':') && Regex("\\d+\\s*(hr|min|sec)").containsMatchIn(text)) {
-        fun part(unit: String) = Regex("(\\d+)\\s*$unit").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        return part("hr") * 3600 + part("min") * 60 + part("sec")
+    if (!text.contains(':') && DURATION_WORDS_REGEX.containsMatchIn(text)) {
+        fun part(regex: Regex) = regex.find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        return part(DURATION_HR_REGEX) * 3600 + part(DURATION_MIN_REGEX) * 60 + part(DURATION_SEC_REGEX)
     }
     val parts = text.trim().split(":").mapNotNull { it.toIntOrNull() }
     if (parts.isEmpty()) return 0

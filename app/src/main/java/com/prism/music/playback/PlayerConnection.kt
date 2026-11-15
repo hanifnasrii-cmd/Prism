@@ -1155,12 +1155,15 @@ class PlayerConnection(private val context: Context, private val c: AppContainer
 
     // ------------------------------------------------------------ State mirroring
 
-    private fun refresh() {
+    private fun refresh(rebuildQueue: Boolean = true) {
         val p = player ?: return
         val item = p.currentMediaItem
         val song = item?.toSong()
         val changed = song?.id != _current.value?.id
         val wasLive = _current.value?.isLive == true
+        val indexChanged = p.currentMediaItemIndex != _index.value
+        val shuffleChanged = p.shuffleModeEnabled != _shuffle.value
+        val repeatChanged = p.repeatMode != _repeat.value
         if (changed) _videoFailedFor.value = null
         _current.value = song
         _isPlaying.value = p.isPlaying
@@ -1171,26 +1174,28 @@ class PlayerConnection(private val context: Context, private val c: AppContainer
         _videoMode.value = item?.videoModeId != null
         _hasNext.value = p.hasNextMediaItem()
         _hasPrevious.value = p.hasPreviousMediaItem()
-        // Keys stay stable when items move (id + occurrence), so a dragged row keeps its gesture.
-        val seen = HashMap<String, Int>()
-        _queue.value = (0 until p.mediaItemCount).mapNotNull { i ->
-            val mi: MediaItem = p.getMediaItemAt(i)
-            val n = seen.merge(mi.mediaId, 1, Int::plus) ?: 1
-            mi.toSong()?.let { QueueEntry(i, it, "${mi.mediaId}#$n") }
+        if (rebuildQueue || changed || indexChanged || shuffleChanged || repeatChanged || _queue.value.size != p.mediaItemCount) {
+            // Keys stay stable when items move (id + occurrence), so a dragged row keeps its gesture.
+            val seen = HashMap<String, Int>()
+            _queue.value = (0 until p.mediaItemCount).mapNotNull { i ->
+                val mi: MediaItem = p.getMediaItemAt(i)
+                val n = seen.merge(mi.mediaId, 1, Int::plus) ?: 1
+                mi.toSong()?.let { QueueEntry(i, it, "${mi.mediaId}#$n") }
+            }
+            _upNext.value = buildList {
+                val tl = p.currentTimeline
+                if (tl.isEmpty || p.currentMediaItemIndex !in 0 until tl.windowCount) return@buildList
+                var i = tl.getNextWindowIndex(p.currentMediaItemIndex, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled)
+                while (i != C.INDEX_UNSET && size < tl.windowCount) { add(i); i = tl.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled) }
+            }
+            // Before the current song in play order, oldest first (#68: the queue only went forward).
+            _played.value = buildList {
+                val tl = p.currentTimeline
+                if (tl.isEmpty || p.currentMediaItemIndex !in 0 until tl.windowCount) return@buildList
+                var i = tl.getPreviousWindowIndex(p.currentMediaItemIndex, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled)
+                while (i != C.INDEX_UNSET && size < tl.windowCount) { add(i); i = tl.getPreviousWindowIndex(i, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled) }
+            }.asReversed()
         }
-        _upNext.value = buildList {
-            val tl = p.currentTimeline
-            if (tl.isEmpty || p.currentMediaItemIndex !in 0 until tl.windowCount) return@buildList
-            var i = tl.getNextWindowIndex(p.currentMediaItemIndex, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled)
-            while (i != C.INDEX_UNSET && size < tl.windowCount) { add(i); i = tl.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled) }
-        }
-        // Before the current song in play order, oldest first (#68: the queue only went forward).
-        _played.value = buildList {
-            val tl = p.currentTimeline
-            if (tl.isEmpty || p.currentMediaItemIndex !in 0 until tl.windowCount) return@buildList
-            var i = tl.getPreviousWindowIndex(p.currentMediaItemIndex, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled)
-            while (i != C.INDEX_UNSET && size < tl.windowCount) { add(i); i = tl.getPreviousWindowIndex(i, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled) }
-        }.asReversed()
         if (song != null && (changed || song.isLive != wasLive)) checkVideo(song)
         updateLyricTiming()
     }
@@ -1248,11 +1253,14 @@ class PlayerConnection(private val context: Context, private val c: AppContainer
     val jumps: StateFlow<Int> = _jumps
 
     override fun onEvents(player: Player, events: Player.Events) {
-        refresh()
+        val rebuildQueue = events.containsAny(
+            Player.EVENT_TIMELINE_CHANGED,
+            Player.EVENT_MEDIA_ITEM_TRANSITION,
+            Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+            Player.EVENT_REPEAT_MODE_CHANGED,
+            Player.EVENT_MEDIA_METADATA_CHANGED,
+        )
+        refresh(rebuildQueue)
         if (events.contains(Player.EVENT_POSITION_DISCONTINUITY)) _jumps.value++
-    }
-
-    override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-        refresh()
     }
 }

@@ -11,6 +11,7 @@ import com.prism.music.playback.together.fromPeer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.util.UUID
@@ -263,18 +264,30 @@ class PrismLibrary(private val dir: File) {
     @Synchronized
     private fun change(f: (PrismLibraryFile) -> PrismLibraryFile) {
         data.update(f)
-        _lists.value = data.value.lists
-        _albums.value = data.value.albums
-        _playlists.value = data.value.playlists
-        _folders.value = data.value.folders
-        write(data.value)
+        val snapshot = data.value
+        _lists.value = snapshot.lists
+        _albums.value = snapshot.albums
+        _playlists.value = snapshot.playlists
+        _folders.value = snapshot.folders
+        if (android.os.Looper.getMainLooper()?.isCurrentThread == true) {
+            val prev = pendingWrites[file]
+            pendingWrites[file] = ioScope.launch {
+                prev?.join()
+                write(snapshot)
+            }
+        } else {
+            pendingWrites.remove(file)?.let { kotlinx.coroutines.runBlocking { it.join() } }
+            write(snapshot)
+        }
     }
 
     private fun read(): PrismLibraryFile = runCatching {
+        pendingWrites.remove(file)?.let { kotlinx.coroutines.runBlocking { it.join() } }
         if (!file.isFile) PrismLibraryFile()
         else InnerTube.json.decodeFromString(PrismLibraryFile.serializer(), file.readText())
     }.getOrElse { PrismLibraryFile() }
 
+    @Synchronized
     private fun write(lib: PrismLibraryFile) {
         runCatching {
             dir.mkdirs()
@@ -285,6 +298,8 @@ class PrismLibrary(private val dir: File) {
     }
 
     companion object {
+        private val ioScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        private val pendingWrites = java.util.concurrent.ConcurrentHashMap<File, kotlinx.coroutines.Job>()
         /** Prism playlists' ids start with this. */
         const val PREFIX = "prism:"
         /** The most playlists, albums or folders, and songs in one playlist, another device's library brings. */

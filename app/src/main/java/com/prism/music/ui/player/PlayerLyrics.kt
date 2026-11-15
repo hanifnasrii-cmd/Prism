@@ -379,15 +379,18 @@ fun rememberLyricsState(song: Song, opened: Boolean = true): LyricsState {
  * staying within a few ms of the audio, and snaps on seeks.
  */
 @Composable
-fun rememberLyricClock(active: Boolean = true): State<Long> {
+fun rememberLyricClock(active: Boolean = true, highFreq: Boolean = true): State<Long> {
     val pc = LocalContainer.current.player
     val clock = remember { mutableLongStateOf(pc.lyricPosition) }
     // Android runs ordinary app content at 60 Hz; ask for the panel's full rate while lyrics move.
     val view = LocalView.current
+    val slow = remember(view) { com.prism.music.data.DevicePower.mayBeSlow(view.context) }
+    val perf = LocalAppSettings.current.performanceMode
     // Only while they move: paused, a 120 Hz screen goes back to its own rate (it stayed at 120 under paused lyrics).
     val playing by pc.isPlaying.collectAsState()
-    DisposableEffect(active && playing) {
-        if (active && playing && Build.VERSION.SDK_INT >= 35) {
+    val want120 = active && playing && highFreq && !slow && !perf
+    DisposableEffect(want120) {
+        if (want120 && Build.VERSION.SDK_INT >= 35) {
             val before = view.requestedFrameRate
             view.requestedFrameRate = 120f
             onDispose { view.requestedFrameRate = before }
@@ -397,7 +400,7 @@ fun rememberLyricClock(active: Boolean = true): State<Long> {
     // Every seek starts it again from the new place: a paused song's clock isn't running ([active] is false), so a line
     // tapped while paused moved the music but not the lyrics (#308; the TV had the same, fixed in 1.8.0).
     val jumps by pc.jumps.collectAsState()
-    LaunchedEffect(active, shift, jumps) {
+    LaunchedEffect(active, shift, jumps, highFreq) {
         var shown = pc.lyricPosition.toDouble()
         clock.longValue = shown.toLong()
         if (!active) return@LaunchedEffect
@@ -407,23 +410,30 @@ fun rememberLyricClock(active: Boolean = true): State<Long> {
             // of the audio and then jump back). It's then looked at a few times a second (a seek still moves them),
             // rather than on every frame of the screen.
             if (pc.player?.isPlaying != true) {
-                withFrameNanos { }
                 last = -1L
-                shown = pc.lyricPosition.toDouble()
-                clock.longValue = shown.toLong()
+                val pos = pc.lyricPosition
+                shown = pos.toDouble()
+                if (clock.longValue != pos) clock.longValue = pos
                 delay(PAUSED_CLOCK_MS)
                 continue
             }
-            withFrameNanos { now ->
-            val actual = pc.lyricPosition
-            if (last < 0 || pc.player?.isPlaying != true) shown = actual.toDouble() else {
-                val speed = pc.player?.playbackParameters?.speed ?: 1f
-                shown += (now - last) / 1_000_000.0 * speed
-                val err = actual - shown
-                shown = if (abs(err) > 250) actual.toDouble() else shown + err * 0.06
+            if (!highFreq) {
+                val pos = pc.lyricPosition
+                shown = pos.toDouble()
+                if (clock.longValue != pos) clock.longValue = pos
+                delay(48L)
+                continue
             }
-            last = now
-            clock.longValue = shown.toLong()
+            withFrameNanos { now ->
+                val actual = pc.lyricPosition
+                if (last < 0 || pc.player?.isPlaying != true) shown = actual.toDouble() else {
+                    val speed = pc.player?.playbackParameters?.speed ?: 1f
+                    shown += (now - last) / 1_000_000.0 * speed
+                    val err = actual - shown
+                    shown = if (abs(err) > 250) actual.toDouble() else shown + err * 0.06
+                }
+                last = now
+                clock.longValue = shown.toLong()
             }
         }
     }
@@ -434,6 +444,23 @@ fun rememberLyricClock(active: Boolean = true): State<Long> {
 private const val PAUSED_CLOCK_MS = 40L
 
 private fun List<LyricLine>.indexAt(ms: Long): Int {
+    if (isEmpty() || ms < 0L) return -1
+    if (first().timeMs >= 0L) {
+        var lo = 0
+        var hi = lastIndex
+        var ans = -1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            val t = this[mid].timeMs
+            if (t <= ms) {
+                if (t >= 0L) ans = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        return ans
+    }
     var idx = -1
     for (i in indices) if (this[i].timeMs in 0..ms) idx = i else if (this[i].timeMs > ms) break
     return idx
@@ -496,7 +523,10 @@ fun CurrentLyricStrip(state: LyricsState, isPlaying: Boolean, overScrubber: Bool
                 Text(tr(R.string.open_lyrics), style = baseStyle, color = Color.White, maxLines = 1)
             }
             lines.isNotEmpty() -> {
-                val clock = rememberLyricClock(isPlaying)
+                val stripNeedsHighFreq = remember(lines, look.plainWhenLineTimed) {
+                    !look.plainWhenLineTimed || lines.any { it.isWordSynced }
+                }
+                val clock = rememberLyricClock(isPlaying, highFreq = stripNeedsHighFreq)
                 val index by remember(lines) { derivedStateOf { lines.indexAt(clock.value) } }
                 val current = lines.getOrNull(index)
                 val firstSung = remember(lines) { lines.indexOfFirst { !it.isGap } }
@@ -948,21 +978,23 @@ fun WeightSweptLine(
             }
         }
     }
-    val text = androidx.compose.ui.text.buildAnnotatedString {
-        line.words.forEachIndexed { i, w ->
-            val (step, lit) = marks[i]
-            val a = dimAlpha + (1f - dimAlpha) * lit / 10f
-            val core = w.text.trimEnd()
-            val weight = FontWeight(lightWeight + step * WEIGHT_STEP)
-            val ls = (spacing[i].getOrElse(step) { 0f }).em
-            // A colored fill comes in as the word is sung; until then the word is dim white.
-            pushStyle(
-                if (litBrush != null && lit > 0) androidx.compose.ui.text.SpanStyle(brush = litBrush, alpha = a, fontWeight = weight, letterSpacing = ls)
-                else androidx.compose.ui.text.SpanStyle(color = Color.White.copy(alpha = a), fontWeight = weight, letterSpacing = ls),
-            )
-            append(core)
-            pop()
-            append(w.text.substring(core.length))
+    val text = remember(line, marks, spacing, litBrush, dimAlpha, lightWeight) {
+        androidx.compose.ui.text.buildAnnotatedString {
+            line.words.forEachIndexed { i, w ->
+                val (step, lit) = marks[i]
+                val a = dimAlpha + (1f - dimAlpha) * lit / 10f
+                val core = w.text.trimEnd()
+                val weight = FontWeight(lightWeight + step * WEIGHT_STEP)
+                val ls = (spacing[i].getOrElse(step) { 0f }).em
+                // A colored fill comes in as the word is sung; until then the word is dim white.
+                pushStyle(
+                    if (litBrush != null && lit > 0) androidx.compose.ui.text.SpanStyle(brush = litBrush, alpha = a, fontWeight = weight, letterSpacing = ls)
+                    else androidx.compose.ui.text.SpanStyle(color = Color.White.copy(alpha = a), fontWeight = weight, letterSpacing = ls),
+                )
+                append(core)
+                pop()
+                append(w.text.substring(core.length))
+            }
         }
     }
     Text(text, modifier, style = axisStyle)
@@ -1099,7 +1131,7 @@ fun LyricsPanel(
     val look = rememberLyricsLook(settings, com.prism.music.data.PlaylistCovers.artOf(state.song)).let { if (lyricsGround) it else it.withoutCard(settings.lyricsOthersAlpha) }
     val lines = state.lines
     val synced = remember(lines) { lines.any { it.timeMs >= 0 } }
-    val clock = rememberLyricClock(isPlaying)
+    val clock = rememberLyricClock(isPlaying && synced, highFreq = synced)
     val active by remember(lines) { derivedStateOf { if (!synced) -1 else lines.indexAt(clock.value) } }
     // Lines sung at the same time as [active] (two voices overlapping) stay lit with it (#65).
     val alsoActive by remember(lines) { derivedStateOf { if (!synced) emptyList() else lines.activeAt(clock.value) } }
@@ -1186,6 +1218,12 @@ fun LyricsPanel(
     val axisFamily = remember(lyricsChoice) { lyricsChoice?.let(com.prism.music.ui.theme.AppFonts::axis) }
     // Bold card: the lines sit on the cover's own color (drawn behind the player), the words to come dark.
     val onCard = look.card != null
+    val fadeMask = remember {
+        object {
+            var height = -1f
+            var brush: Brush? = null
+        }
+    }
     androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
     // Where the sung line settles: near the top (as before), a third down or in the middle.
     val settleAt = maxOf(30.dp, maxHeight * look.position)
@@ -1204,12 +1242,16 @@ fun LyricsPanel(
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
-                drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.06f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                if (fadeMask.height != size.height || fadeMask.brush == null) {
+                    fadeMask.height = size.height
+                    fadeMask.brush = Brush.verticalGradient(0f to Color.Transparent, 0.06f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+                }
+                drawRect(fadeMask.brush!!, blendMode = BlendMode.DstIn)
             },
         // Lower down, room for the last line to settle (lifted, #341, it needs a little more than the rest of the page).
         contentPadding = PaddingValues(top = settleAt, bottom = if (look.position == 0f) 400.dp else maxOf(400.dp, maxHeight)),
     ) {
-        itemsIndexed(lines) { index, line ->
+        itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
             if (!synced && line.text.startsWith("[") && line.text.endsWith("]")) {
                 Box(Modifier.padding(top = if (index == 0) 6.dp else 24.dp, bottom = 8.dp)) {
                     Text(

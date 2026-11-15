@@ -2487,15 +2487,17 @@ class SettingsRepository(
         }
     }
 
+    private val defaultSettings = AppSettings()
+
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, def: E): E =
-        this[key]?.let { v -> enumValues<E>().firstOrNull { it.name == v } } ?: def
+        this[key]?.let { v -> kotlin.enums.enumEntries<E>().firstOrNull { it.name == v } } ?: def
 
     /** A comma-separated list of enum names (unknown ones skipped); [def] when unset or nothing in it is known. */
     private inline fun <reified E : Enum<E>> Preferences.enumList(key: Preferences.Key<String>, def: List<E>): List<E> =
-        this[key]?.split(',')?.mapNotNull { n -> enumValues<E>().firstOrNull { it.name == n } }?.distinct()?.ifEmpty { null } ?: def
+        this[key]?.split(',')?.mapNotNull { n -> kotlin.enums.enumEntries<E>().firstOrNull { it.name == n } }?.distinct()?.ifEmpty { null } ?: def
 
     private fun read(p: Preferences): AppSettings {
-        val d = AppSettings()
+        val d = defaultSettings
         return AppSettings(
             onboarded = p[K.onboarded] ?: d.onboarded,
             cookie = p[K.cookie] ?: "",
@@ -2928,19 +2930,20 @@ class SettingsRepository(
 
     /** The stored settings as they last read (what [previewLook] starts from). */
     @Volatile private var raw: Preferences = runBlocking { context.dataStore.data.first() }
+    private val initialStored: AppSettings = read(raw)
+
+    /** The settings as the listener set them (Settings shows these: Performance mode doesn't change a switch). */
+    val stored: StateFlow<AppSettings> = context.dataStore.data.map { raw = it; read(it) }.stateIn(scope, SharingStarted.Eagerly, initialStored)
 
     /**
      * The settings as Prism uses them: with Performance mode on, its lighter look in place of the listener's heavier
      * choices ([AppSettings.effective]). The choices themselves are [stored], unchanged.
      */
-    val flow: StateFlow<AppSettings> = context.dataStore.data.map { raw = it; read(it).effective() }.stateIn(
-        scope, SharingStarted.Eagerly, read(raw).effective()
+    val flow: StateFlow<AppSettings> = stored.map { it.effective() }.stateIn(
+        scope, SharingStarted.Eagerly, initialStored.effective()
     )
 
     val current: AppSettings get() = flow.value
-
-    /** The settings as the listener set them (Settings shows these: Performance mode doesn't change a switch). */
-    val stored: StateFlow<AppSettings> = context.dataStore.data.map { read(it) }.stateIn(scope, SharingStarted.Eagerly, read(raw))
 
     /** The look settings now set ([lookOf]): what Looks are saved from and what undo steps back through. */
     val lookValues: StateFlow<Map<String, String>> = context.dataStore.data.map(::lookOf)
@@ -2951,6 +2954,10 @@ class SettingsRepository(
 
     /** The settings as they'd be with [values] as the Look, without changing anything (Look cards draw from it). */
     fun previewLook(values: Map<String, String>): AppSettings = read(raw.toMutablePreferences().also { putLook(it, values) })
+
+    /** A Look's [values] read onto default settings, for comparing two Looks' effective values without non-look keys. */
+    fun lookSettings(values: Map<String, String>): AppSettings =
+        read(androidx.datastore.preferences.core.emptyPreferences().toMutablePreferences().also { putLook(it, values) })
 
     /**
      * Makes [values] the Look in one edit, so the app redraws once. [fontChanged]: an imported font file was swapped in
@@ -3587,12 +3594,14 @@ class SettingsRepository(
     }
 
     // 1.8.0 player editor
+    private val defaultParts = PlayerParts()
+
     /** A comma-separated set of names (unknown ones skipped): a Look or backup from a later Prism still opens. */
     private inline fun <reified E : Enum<E>> namesOf(v: String?): List<E> =
-        v.orEmpty().split(',').mapNotNull { n -> enumValues<E>().firstOrNull { it.name == n } }.distinct()
+        v.orEmpty().split(',').mapNotNull { n -> kotlin.enums.enumEntries<E>().firstOrNull { it.name == n } }.distinct()
 
     private fun readParts(p: Preferences): PlayerParts {
-        val d = PlayerParts()
+        val d = defaultParts
         return PlayerParts(
             hidden = namesOf<PlayerPart>(p[K.playerHiddenParts]).filter { it in PlayerPart.NEW }.toSet(),
             menuHidden = namesOf<MenuAction>(p[K.playerMenuHidden]).filter { it.foldable }.toSet(),

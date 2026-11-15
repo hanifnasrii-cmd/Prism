@@ -329,7 +329,8 @@ internal class RestartCover {
 /** The frame on [view] now as a picture of the whole video frame (uncropped), no taller than the view; null if it can't be had. */
 private fun firstFrameOf(view: TextureView, aspect: Float): android.graphics.Bitmap? {
     if (aspect <= 0f || view.height <= 0) return null
-    val h = view.height.coerceAtMost(1080)
+    val maxH = if (com.prism.music.data.DevicePower.mayBeSlow(view.context)) 540 else 1080
+    val h = view.height.coerceAtMost(maxH)
     val w = (h * aspect).toInt().coerceIn(2, 1920)
     return runCatching { view.getBitmap(w, h) }.getOrNull()
 }
@@ -526,7 +527,13 @@ internal fun cropTransform(viewW: Float, viewH: Float, aspect: Float, bars: com.
 /** Dissolve the bottom edge on the view's own node (a Compose mask can't reach video frames). */
 @RequiresApi(31)
 internal fun android.view.View.bottomFade(fraction: Float) {
-    if (fraction <= 0.001f || height <= 0) { setRenderEffect(null); return }
+    if (fraction <= 0.001f || height <= 0) {
+        if (tag != null) { tag = null; setRenderEffect(null) }
+        return
+    }
+    val key = (height.toLong() shl 32) or (fraction.toRawBits().toLong() and 0xFFFFFFFFL)
+    if (tag == key) return
+    tag = key
     val h = height.toFloat()
     val gradient = LinearGradient(0f, h * (1f - fraction), 0f, h, android.graphics.Color.BLACK, android.graphics.Color.TRANSPARENT, Shader.TileMode.CLAMP)
     setRenderEffect(RenderEffect.createBlendModeEffect(RenderEffect.createOffsetEffect(0f, 0f), RenderEffect.createShaderEffect(gradient), BlendMode.DST_IN))

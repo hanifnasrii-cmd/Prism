@@ -333,12 +333,15 @@ fun SearchScreen(bottomPadding: Dp) {
         // their pictures. The chips and results under them wait until the search is made, so the page isn't stacked
         // with three kinds of rows at once.
         if (focused) {
+            val trimmedQuery = query.trim()
+            val distinctSuggestions = remember(suggestions, trimmedQuery) { suggestions.filterNot { it.equals(trimmedQuery, true) }.distinct() }
+            val distinctSuggestedItems = remember(suggestedItems) { suggestedItems.distinctBy { it.id } }
             LazyColumn(contentPadding = PaddingValues(top = 2.dp, bottom = bottomPadding + 16.dp)) {
-                item("search-for") { SuggestionRow(PrismIcons.Search, tr(R.string.search_for, query.trim()), onFill = null, strong = true) { submit(query) } }
+                item("search-for") { SuggestionRow(PrismIcons.Search, tr(R.string.search_for, trimmedQuery), onFill = null, strong = true) { submit(query) } }
                 // Each once (#330/#346: a row repeated crashed the list with "Key was already used").
-                items(suggestions.filterNot { it.equals(query.trim(), true) }.distinct(), key = { "s:$it" }) { s -> SuggestionRow(PrismIcons.Search, s, onFill = { query = it }) { submit(s) } }
+                items(distinctSuggestions, key = { "s:$it" }) { s -> SuggestionRow(PrismIcons.Search, s, onFill = { query = it }) { submit(s) } }
                 // A tap opens or plays one straight away.
-                items(suggestedItems.distinctBy { it.id }, key = { "i:" + it.id }) { item -> ResultRow(item) { saveQuery(query); open(item) } }
+                items(distinctSuggestedItems, key = { "i:" + it.id }) { item -> ResultRow(item) { saveQuery(query); open(item) } }
             }
             return@Column
         }
@@ -373,9 +376,10 @@ fun SearchScreen(bottomPadding: Dp) {
                 val resultsState = androidx.compose.foundation.lazy.rememberLazyListState()
                 // Select many (1.8.3): the songs among the results.
                 val resultSongs = remember(r.value) { r.value.filterIsInstance<SongItem>().map { it.song }.distinctBy { it.id } }
+                val distinctResults = remember(r.value) { r.value.distinctBy { it.id + it.title } }
                 com.prism.music.ui.components.SelectableSongs(resultSongs) {
                 LazyColumn(state = resultsState, contentPadding = PaddingValues(top = 4.dp, bottom = bottomPadding + 16.dp)) {
-                    items(r.value.distinctBy { it.id + it.title }, key = { it.id + it.title }) { item -> ResultRow(item) { open(item) } }
+                    items(distinctResults, key = { it.id + it.title }) { item -> ResultRow(item) { open(item) } }
                     if (continuation != null) item {
                         LaunchedEffect(continuation) {
                             val token = continuation ?: return@LaunchedEffect

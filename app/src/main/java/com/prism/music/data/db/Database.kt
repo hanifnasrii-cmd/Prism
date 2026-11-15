@@ -62,9 +62,17 @@ data class SongEntity(
 
 private val artistsJsonFormat = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 private val artistListSerializer = kotlinx.serialization.builtins.ListSerializer(ArtistRef.serializer())
+private val artistsCache = object : java.util.LinkedHashMap<String, List<ArtistRef>>(512, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ArtistRef>>?): Boolean = size > 2048
+}
 
-private fun storedArtists(json: String?): List<ArtistRef>? =
-    json?.let { runCatching { artistsJsonFormat.decodeFromString(artistListSerializer, it) }.getOrNull() }
+private fun storedArtists(json: String?): List<ArtistRef>? {
+    if (json == null) return null
+    synchronized(artistsCache) { artistsCache[json] }?.let { return it }
+    return runCatching { artistsJsonFormat.decodeFromString(artistListSerializer, json) }.getOrNull()?.also {
+        synchronized(artistsCache) { artistsCache[json] = it }
+    }
+}
 
 fun Song.toEntity(base: SongEntity? = null) = SongEntity(
     id = id,
@@ -271,13 +279,16 @@ data class SongPlays(
 val SongPlays.mainArtist: String
     get() = primaryArtist.ifBlank { if (artistName == UNKNOWN_ARTIST) "" else artistName.substringBefore(", ") }
 
+private val MERGE_BRACKETS_REGEX = Regex("\\s*[(\\[][^)\\]]*[)\\]]")
+private val MERGE_SPACES_REGEX = Regex("\\s+")
+
 /**
  * One entry per song however many uploads of it were played (YouTube often has two "Beat It"s: the album's and a
  * single's): same title without its brackets, same main artist. The most played upload stands for the song, with the
  * plays and time of all of them; most listened first, as the query orders them.
  */
 fun List<SongPlays>.mergeUploads(): List<SongPlays> {
-    fun key(s: SongPlays) = s.title.lowercase().replace(Regex("\\s*[(\\[][^)\\]]*[)\\]]"), "").replace(Regex("\\s+"), " ").trim() +
+    fun key(s: SongPlays) = s.title.lowercase().replace(MERGE_BRACKETS_REGEX, "").replace(MERGE_SPACES_REGEX, " ").trim() +
         "|" + s.mainArtist.lowercase()
     return groupBy { if (it.mainArtist.isBlank()) it.songId else key(it) }.values
         .map { same -> same.maxBy { it.ms }.copy(plays = same.sumOf { it.plays }, ms = same.sumOf { it.ms }) }
@@ -330,6 +341,9 @@ interface SongDao {
 
     @Query("UPDATE songs SET liked = :liked, likedAt = :at WHERE id = :id")
     suspend fun setLiked(id: String, liked: Boolean, at: Long)
+
+    @Query("UPDATE songs SET liked = 0, likedAt = 0 WHERE id IN (:ids)")
+    suspend fun clearLikes(ids: List<String>)
 
     @Query("UPDATE songs SET lastPlayed = :at WHERE id = :id")
     suspend fun touch(id: String, at: Long)

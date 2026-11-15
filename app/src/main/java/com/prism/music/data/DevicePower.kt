@@ -9,11 +9,21 @@ object DevicePower {
     /** 4 GB phones report a little under 4 GB to apps; this takes them in. */
     private const val SMALL_MEMORY = 4_400_000_000L
 
+    @Volatile
+    private var cachedSlow: Boolean? = null
+
     /**
      * Android 9 or older, a phone that calls itself low on memory, or one with 4 GB or less: the phones GitHub's
      * slowness reports since 1.7 came from (a Galaxy Note 8 on Android 9, an Honor X6a).
      */
     fun mayBeSlow(context: Context): Boolean {
+        cachedSlow?.let { return it }
+        val result = computeMayBeSlow(context)
+        cachedSlow = result
+        return result
+    }
+
+    private fun computeMayBeSlow(context: Context): Boolean {
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) return true
         val am = context.getSystemService(ActivityManager::class.java) ?: return false
         if (am.isLowRamDevice) return true

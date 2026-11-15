@@ -525,7 +525,7 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
         val onboardingPicker = (route?.startsWith(Routes.PICK_ARTISTS) == true || route?.startsWith(Routes.ACCOUNT) == true) &&
             backStack?.arguments?.getBoolean("onboarding") == true
         val showChrome = route != Routes.LOGIN && route != Routes.LOGIN_ADD && route != Routes.DISCORD_LOGIN && route != Routes.WELCOME && !onboardingPicker
-        val tabs = settings.navTabs.map { it.tab(settings.tabNames[it]) }
+        val tabs = remember(settings.navTabs, settings.tabNames) { settings.navTabs.map { it.tab(settings.tabNames[it]) } }
 
         val together by c.together.state.collectAsState()
         val inSession = together is com.prism.music.playback.together.TogetherState.Hosting || together is com.prism.music.playback.together.TogetherState.Guest
@@ -569,10 +569,6 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
             }
         }
         LaunchedEffect(route) { barCompact = false }
-        val barT by animateFloatAsState(
-            if (barCompact && settings.navHideOnScroll) 1f else 0f,
-            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow), label = "bar",
-        )
 
         LaunchedEffect(Unit) {
             c.player.errors.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
@@ -615,6 +611,7 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
 
         // "Customize this" (1.7.3): the element tapped and, for a Home section, which one.
         var customizing by remember { mutableStateOf<Pair<com.prism.music.ui.components.CustomizeTarget, String?>?>(null) }
+        val onCustomize = remember { { t: com.prism.music.ui.components.CustomizeTarget, k: String? -> customizing = t to k } }
         // What's under the full player holds its purely visual motion still while the player hides it.
         val playerCover = remember { com.prism.music.ui.components.PlayerCover() }
         val hiddenByPlayer = remember(playerCover) { { playerCover.hides } }
@@ -634,7 +631,7 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
             LocalNavigator provides navigator,
             LocalHazeState provides haze,
             com.prism.music.ui.theme.LocalChromeStart provides railInset,
-            com.prism.music.ui.components.LocalCustomize provides { t, k -> customizing = t to k },
+            com.prism.music.ui.components.LocalCustomize provides onCustomize,
         ) {
             // While the full player is open it covers everything else, so TalkBack shouldn't reach the screen, tabs and
             // mini player under it (they're only drawn, not hidden, to keep the player's slide smooth).
@@ -649,8 +646,8 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 Box(
                     Modifier.fillMaxSize().then(underPlayer).nestedScroll(barScroll)
-                        // The page is copied only when glass will sample it (#343).
-                        .then(if (com.prism.music.ui.theme.glassSamplesThePage(Build.VERSION.SDK_INT, settings.liquidGlass, settings.frostedGlass)) Modifier.hazeSource(haze) else Modifier)
+                        // The page is copied only when glass will sample it (#343), and not while the full player covers it.
+                        .then(if (!playerCover.settled && com.prism.music.ui.theme.glassSamplesThePage(Build.VERSION.SDK_INT, settings.liquidGlass, settings.frostedGlass)) Modifier.hazeSource(haze) else Modifier)
                         .then(if (settings.swipeTabs && !useRail) swipeBetweenTabs(tabs, route, selectTab) else Modifier),
                 ) {
                   CompositionLocalProvider(com.prism.music.ui.components.LocalHiddenByPlayer provides hiddenByPlayer) {
@@ -660,7 +657,10 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
                     val fadeMs = if (settings.behavior.screenFades) 700 else 0
                     // "Slide between screens" (#208, 1.7.9.2): a new page comes in from the side and Back takes it
                     // away the same way (from the left in right-to-left languages); the page underneath moves a little.
-                    val slides = PageSlides(settings.behavior.screenFades && settings.behavior.pageSlide, androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl)
+                    val isRtl = layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl
+                    val slides = remember(settings.behavior.screenFades, settings.behavior.pageSlide, isRtl) {
+                        PageSlides(settings.behavior.screenFades && settings.behavior.pageSlide, isRtl)
+                    }
                     NavHost(
                         navController, startDestination = start,
                         enterTransition = { slides.enter ?: if (fadeMs == 0) EnterTransition.None else fadeIn(tween(fadeMs)) },
@@ -889,7 +889,7 @@ private fun PrismRoot(deepLink: MutableStateFlow<Uri?>) {
                                 MiniPlayer(Modifier.customizable(com.prism.music.ui.components.CustomizeTarget.MINI_PLAYER), bare = true) { playerOpen = true }
                             }
                         })
-                        Box(Modifier.customizable(com.prism.music.ui.components.CustomizeTarget.TAB_BAR)) { TabBar(tabs, route, barT, settings, joinedMini, selectTab) }
+                        Box(Modifier.customizable(com.prism.music.ui.components.CustomizeTarget.TAB_BAR)) { TabBar(tabs, route, barCompact && settings.navHideOnScroll, settings, joinedMini, selectTab) }
                     }
                 }
                 }
@@ -1081,14 +1081,17 @@ private fun isSelected(tab: Tab, route: String?): Boolean =
 /** The tabs' own row (bar or rail), for in-app tests: a page's chip can carry a tab's name too ("Replay", 1.8.5). */
 const val NAV_TABS_TAG = "nav:tabs"
 
-/** @param compact 0 = full bar, 1 = slim bar (while scrolling down). */
 @Composable
 private fun TabBar(
-    tabs: List<Tab>, route: String?, compact: Float, settings: AppSettings,
+    tabs: List<Tab>, route: String?, isCompact: Boolean, settings: AppSettings,
     /** The mini player joined on top of a floating bar, in the same glass (1.7.6). */
     joined: (@Composable () -> Unit)? = null,
     onSelect: (String) -> Unit,
 ) {
+    val compact by animateFloatAsState(
+        if (isCompact) 1f else 0f,
+        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow), label = "bar",
+    )
     val barSize = settings.navBarSize
     val tint = navFill(settings.navBarFill)
     when (settings.navStyle) {
@@ -1107,7 +1110,7 @@ private fun TabBar(
                         Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(0.75.dp).background(MaterialTheme.colorScheme.hairline))
                         tabsRow()
                     }
-                } else GlassSurface(Modifier.fillMaxWidth(1f - 0.30f * compact).height(height), shape = RoundedCornerShape(height / 2), tint = tint) {
+                } else GlassSurface(Modifier.fillMaxWidth(1f - 0.30f * compact).height(height), shape = CircleShape, tint = tint) {
                     tabsRow()
                 }
             }
@@ -1131,7 +1134,7 @@ private fun TabBar(
         }
         NavBarStyle.MINIMAL -> {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                GlassSurface(Modifier.height(barSize.minimal.dp), shape = RoundedCornerShape((barSize.minimal / 2).dp), tint = tint) {
+                GlassSurface(Modifier.height(barSize.minimal.dp), shape = CircleShape, tint = tint) {
                     Row(Modifier.testTag(NAV_TABS_TAG).fillMaxHeight().padding(5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         tabs.forEach { tab -> MinimalTab(tab, isSelected(tab, route), (barSize.minimal - 10).dp) { onSelect(tab.route) } }
                     }

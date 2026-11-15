@@ -309,8 +309,14 @@ fun SongRowLayout(
                 if (liked) Icon(PrismIcons.HeartFilled, tr(R.string.liked), mark, tint = scheme.ink3)
                 if (downloaded) Icon(PrismIcons.DownloadDone, tr(R.string.downloaded), mark, tint = scheme.ink3)
                 if (videoSaved) Icon(PrismIcons.Video, tr(R.string.video_saved), mark, tint = scheme.ink3)
+                val subtitleText = remember(song.artistText, trailingInfo, song.album?.title, showAlbum) {
+                    val second = trailingInfo ?: song.album?.title?.takeIf { showAlbum }
+                    if (second.isNullOrEmpty()) song.artistText
+                    else if (song.artistText.isEmpty()) second
+                    else "${song.artistText} · $second"
+                }
                 Text(
-                    listOfNotNull(song.artistText, trailingInfo ?: song.album?.title?.takeIf { showAlbum }).joinToString(" · "),
+                    subtitleText,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                 )
@@ -430,9 +436,10 @@ private fun Color.compositeOverBlack(): Color = Color(red * alpha, green * alpha
 @Composable
 fun ItemCarousel(items: List<BrowseItem>, onClick: (BrowseItem) -> Unit, cardWidth: Dp = Dp.Unspecified) {
     val w = if (cardWidth == Dp.Unspecified) com.prism.music.ui.theme.LocalUi.current.cardWidth else cardWidth
+    // Each once: a shelf listing one twice crashed the row ("Key was already used", #346's kind).
+    val uniqueItems = remember(items) { items.distinctBy { it.id + it.title } }
     LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        // Each once: a shelf listing one twice crashed the row ("Key was already used", #346's kind).
-        items(items.distinctBy { it.id + it.title }, key = { it.id + it.title }) { item ->
+        items(uniqueItems, key = { it.id + it.title }) { item ->
             ItemCard(item, width = if (item is SongItem && item.song.isVideo) w * 1.5f else w) { onClick(item) }
         }
     }

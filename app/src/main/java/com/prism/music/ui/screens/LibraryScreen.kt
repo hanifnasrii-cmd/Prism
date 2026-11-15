@@ -322,9 +322,15 @@ fun LibraryScreen(bottomPadding: Dp) {
     val sortedSongs = remember(songsBase, songSort) {
         when (songSort) {
             SongSort.RECENT -> songsBase
-            SongSort.TITLE -> songsBase.sortedBy { it.title.lowercase() }
-            SongSort.ARTIST -> songsBase.sortedWith(compareBy<com.prism.music.data.model.Song> { it.primaryArtist.lowercase() }.thenBy { it.album?.title?.lowercase() ?: "" })
-            SongSort.ALBUM -> songsBase.sortedWith(compareBy<com.prism.music.data.model.Song> { it.album?.title?.lowercase() ?: "\uFFFF" }.thenBy { it.title.lowercase() })
+            SongSort.TITLE -> songsBase.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+            SongSort.ARTIST -> songsBase.sortedWith(
+                compareBy<com.prism.music.data.model.Song, String>(String.CASE_INSENSITIVE_ORDER) { it.primaryArtist }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.album?.title ?: "" }
+            )
+            SongSort.ALBUM -> songsBase.sortedWith(
+                compareBy<com.prism.music.data.model.Song, String>(String.CASE_INSENSITIVE_ORDER) { it.album?.title ?: "\uFFFF" }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            )
         }
     }
     val shownSongs = remember(sortedSongs, songQuery) {
@@ -344,8 +350,11 @@ fun LibraryScreen(bottomPadding: Dp) {
             AlbumSort.LIBRARY -> albums
             AlbumSort.DOWNLOADED -> albums.sortedByDescending { downloaded(it) }
             AlbumSort.MOST -> albums.sortedByDescending { albumSongs[it.id]?.size ?: 0 }
-            AlbumSort.TITLE -> albums.sortedBy { it.title.lowercase() }
-            AlbumSort.ARTIST -> albums.sortedWith(compareBy<com.prism.music.data.model.BrowseItem> { artistOf(it).lowercase() }.thenBy { it.title.lowercase() })
+            AlbumSort.TITLE -> albums.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+            AlbumSort.ARTIST -> albums.sortedWith(
+                compareBy<com.prism.music.data.model.BrowseItem, String>(String.CASE_INSENSITIVE_ORDER) { artistOf(it) }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            )
             AlbumSort.ADDED -> albumsRecentlyAdded(albums, savedAlbums.associate { it.id to it.savedAt }, albumsSeen)
         }
     }
@@ -396,7 +405,7 @@ fun LibraryScreen(bottomPadding: Dp) {
         pinnedFirst(when (playlistSort) {
             PlaylistSort.CUSTOM -> LibraryRepository.inOrder(myPlaylists, playlistOrder)
             PlaylistSort.LIBRARY -> myPlaylists
-            PlaylistSort.TITLE -> myPlaylists.sortedBy { it.title.lowercase() }
+            PlaylistSort.TITLE -> myPlaylists.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
         }).filterNot { it.id.removePrefix("VL") in inFolders }
     }
     var rearranging by rememberSaveable { mutableStateOf(false) }
@@ -710,8 +719,9 @@ fun LibraryScreen(bottomPadding: Dp) {
                                 if (it == SongSort.RECENT && !songsFrom.isDefault) tr(R.string.original_order) else it.label
                             }) { songSort = it; c.library.setSort("library:songs", it.name) }
                         }
-                        items(shownSongs, key = { "s" + it.id }, span = { GridItemSpan(maxLineSpan) }) { s ->
-                            SongRow(s, Modifier.locatePulse(locate, s.id)) { c.player.playQueue(shownSongs, shownSongs.indexOf(s), source) }
+                        items(shownSongs.size, key = { "s" + shownSongs[it].id }, span = { GridItemSpan(maxLineSpan) }) { i ->
+                            val s = shownSongs[i]
+                            SongRow(s, Modifier.locatePulse(locate, s.id)) { c.player.playQueue(shownSongs, i, source) }
                         }
                         if (songsBase.isNotEmpty() && shownSongs.isEmpty() && songQuery.isNotBlank()) nothingFound(tr(R.string.songs), songQuery)
                     }

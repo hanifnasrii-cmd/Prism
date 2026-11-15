@@ -93,6 +93,8 @@ class LocalMusic(
 
     suspend fun scan() = scanning.withLock { scanNow() }
 
+    private val albumArt = java.util.concurrent.ConcurrentHashMap<Long, java.util.Optional<String>>()
+
     private suspend fun scanNow() = withContext(Dispatchers.IO) {
         if (!hasPermission()) { _scanned.value = false; return@withContext }
         val out = ArrayList<Track>()
@@ -117,11 +119,11 @@ class LocalMusic(
             "(${MediaStore.Audio.Media.DURATION} >= ? OR ${MediaStore.Audio.Media.DURATION} IS NULL OR ${MediaStore.Audio.Media.DURATION} = 0)"
         // Whether each album has artwork, looked at once per album (asking for art that isn't there fails every time the
         // notification or a list asks, so songs without any get none).
-        val art = HashMap<Long, String?>()
-        fun artFor(albumId: Long): String? = if (albumId <= 0) null else art.getOrPut(albumId) {
+        fun artFor(albumId: Long): String? = if (albumId <= 0) null else albumArt.getOrPut(albumId) {
             val uri = "content://media/external/audio/albumart/$albumId"
-            uri.takeIf { runCatching { context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.close() != null }.getOrDefault(false) }
-        }
+            val found = uri.takeIf { runCatching { context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.close() != null }.getOrDefault(false) }
+            java.util.Optional.ofNullable(found)
+        }.orElse(null)
         runCatching {
             context.contentResolver.query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, selection, arrayOf(MIN_DURATION_MS.toString()),
@@ -172,7 +174,7 @@ class LocalMusic(
         val withArt = out.map { t ->
             if (t.albumId in mixed) t else artFor(t.albumId)?.let { t.copy(song = t.song.copy(thumbnail = it)) } ?: t
         }
-        if (art.values.any { it != null }) publish(withArt)
+        if (withArt != out) publish(withArt)
         val filled = fillEmbeddedArt(withArt, mixed)
         // A song in a real album (a compilation) with no cover of its own still shows the album's.
         val rest = filled.map { t ->
@@ -271,6 +273,7 @@ class LocalMusic(
         private const val MIN_DURATION_MS = 20_000L
         private const val MAX_COVER_READS = 400
         private const val UNKNOWN = "<unknown>"
+        private val STORAGE_CARD_REGEX = Regex("^/storage/([^/]+)/?(.*)$")
 
         /**
          * Album ids whose one artwork may be wrong for some of its songs (#129): a song with no album tag (Android groups
@@ -320,7 +323,7 @@ class LocalMusic(
             val parent = path.substringBeforeLast('/', "")
             val own = parent.removePrefix("/storage/emulated/0")
             if (own != parent) return own.trim('/').let { if (it.isEmpty()) "" else "$it/" }
-            val card = Regex("^/storage/([^/]+)/?(.*)$").find(parent) ?: return parent.trim('/').let { if (it.isEmpty()) "" else "$it/" }
+            val card = STORAGE_CARD_REGEX.find(parent) ?: return parent.trim('/').let { if (it.isEmpty()) "" else "$it/" }
             return if (card.groupValues[2].isEmpty()) "" else "${card.groupValues[1]}:${card.groupValues[2].trim('/')}/"
         }
 

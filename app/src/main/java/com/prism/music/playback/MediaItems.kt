@@ -11,6 +11,10 @@ import com.prism.music.data.model.hiRes
 const val EXTRA_SONG = "prism.song"
 const val EXTRA_VIDEO = "prism.video"
 
+private val songCache = object : java.util.LinkedHashMap<String, Song>(256, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Song>?): Boolean = size > 1024
+}
+
 /**
  * prism://audio/<id>[?video=<videoId>] – resolved to a real stream URL at load time.
  * Live streams are prism://live/<id>, resolved to their HLS manifest, which carries the picture too: their video mode
@@ -23,8 +27,10 @@ fun Song.toMediaItem(videoId: String? = null): MediaItem {
         // The listener's own upload (#101): asked for as their account from the start.
         if (isUpload) appendQueryParameter("upload", "1")
     }.build()
+    val encoded = InnerTube.json.encodeToString(Song.serializer(), this@toMediaItem)
+    synchronized(songCache) { songCache[encoded] = this@toMediaItem }
     val extras = Bundle().apply {
-        putString(EXTRA_SONG, InnerTube.json.encodeToString(Song.serializer(), this@toMediaItem))
+        putString(EXTRA_SONG, encoded)
         if (videoId != null) putString(EXTRA_VIDEO, videoId)
     }
     // #328: shown as the version picked to play in its place (the item itself stays the song, for history and likes).
@@ -33,6 +39,7 @@ fun Song.toMediaItem(videoId: String? = null): MediaItem {
         .setMediaId(id)
         .setUri(uri)
         .setCustomCacheKey(id)
+        .setTag(this@toMediaItem)
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(shown.title)
@@ -53,8 +60,13 @@ fun Song.toMediaItem(videoId: String? = null): MediaItem {
         .build()
 }
 
-fun MediaItem.toSong(): Song? = mediaMetadata.extras?.getString(EXTRA_SONG)?.let {
-    runCatching { InnerTube.json.decodeFromString(Song.serializer(), it) }.getOrNull()
+fun MediaItem.toSong(): Song? {
+    (localConfiguration?.tag as? Song)?.let { return it }
+    val raw = mediaMetadata.extras?.getString(EXTRA_SONG) ?: return null
+    synchronized(songCache) { songCache[raw] }?.let { return it }
+    return runCatching { InnerTube.json.decodeFromString(Song.serializer(), raw) }.getOrNull()?.also {
+        synchronized(songCache) { songCache[raw] = it }
+    }
 }
 
 val MediaItem.videoModeId: String? get() = mediaMetadata.extras?.getString(EXTRA_VIDEO)

@@ -52,11 +52,11 @@ private const val MAX_READ_TRIES = 20L
 class LibraryRepository(private val c: AppContainer) {
     private val songs = c.db.songs()
 
-    val likedIds: StateFlow<Set<String>> = songs.likedIdsFlow().resilient("liked ids").map { it.toSet() }
-        .stateIn(c.scope, SharingStarted.Eagerly, emptySet())
+    val likedIds: StateFlow<Set<String>> = songs.likedIdsFlow().resilient("liked ids").distinctUntilChanged().map { it.toSet() }
+        .flowOn(Dispatchers.Default).stateIn(c.scope, SharingStarted.Eagerly, emptySet())
 
-    val liked = songs.likedFlow().resilient("liked songs").map { list -> list.map { it.toSong() } }
-        .stateIn(c.scope, SharingStarted.Eagerly, emptyList())
+    val liked = songs.likedFlow().resilient("liked songs").distinctUntilChanged().map { list -> list.map { it.toSong() } }
+        .flowOn(Dispatchers.Default).stateIn(c.scope, SharingStarted.Eagerly, emptyList())
 
     /**
      * The liked songs as the lists show them (#111): a liked music video whose song is liked too shows once, as the song,
@@ -68,12 +68,12 @@ class LibraryRepository(private val c: AppContainer) {
             if (merge) LikedMerge.merge(list, c.queue.counterparts) else list
         }.flowOn(kotlinx.coroutines.Dispatchers.Default).stateIn(c.scope, SharingStarted.Eagerly, emptyList())
 
-    val recent = songs.recentFlow(40).resilient("recent songs").map { list -> list.map { it.toSong() } }
-        .stateIn(c.scope, SharingStarted.Eagerly, emptyList())
+    val recent = songs.recentFlow(40).resilient("recent songs").distinctUntilChanged().map { list -> list.map { it.toSong() } }
+        .flowOn(Dispatchers.Default).stateIn(c.scope, SharingStarted.Eagerly, emptyList())
 
     /** Ids of the phone's own files, most recently played first. */
-    val recentLocalIds: StateFlow<List<String>> = songs.recentLocalIdsFlow().resilient("recent files")
-        .stateIn(c.scope, SharingStarted.Lazily, emptyList())
+    val recentLocalIds: StateFlow<List<String>> = songs.recentLocalIdsFlow().resilient("recent files").distinctUntilChanged()
+        .flowOn(Dispatchers.Default).stateIn(c.scope, SharingStarted.Lazily, emptyList())
 
     val playlists = MutableStateFlow<List<BrowseItem>>(emptyList())
     val albums = MutableStateFlow<List<BrowseItem>>(emptyList())
@@ -127,7 +127,7 @@ class LibraryRepository(private val c: AppContainer) {
         // Before the likes go: the playlist mirror would take them out of the old channel's playlist.
         c.likedPlaylist.forget()
         val kept = c.imports.keptLikes() // imported likes kept in Prism are this phone's, not the channel's
-        likedIds.value.filterNot { it.startsWith(Song.LOCAL_PREFIX) || it in kept }.forEach { songs.setLiked(it, false, 0) }
+        likedIds.value.filterNot { it.startsWith(Song.LOCAL_PREFIX) || it in kept }.chunked(500).forEach { songs.clearLikes(it) }
         forgetAccount()
         syncInBackground()
     }
@@ -245,7 +245,7 @@ class LibraryRepository(private val c: AppContainer) {
                 val remoteIds = remote.map { it.id }.toSet()
                 // Local songs' likes are Prism's own, and so are imported likes kept off the account (1.8.1): YouTube
                 // doesn't know them, so it can't take them away.
-                likesToDrop(before, remoteIds, c.imports.keptLikes()).forEach { songs.setLiked(it, false, 0) }
+                likesToDrop(before, remoteIds, c.imports.keptLikes()).chunked(500).forEach { songs.clearLikes(it) }
             }
             if (c.settings.current.downloadLikes && before.isNotEmpty()) {
                 remote.filter { it.id !in before }.forEach { c.downloads.download(it) }

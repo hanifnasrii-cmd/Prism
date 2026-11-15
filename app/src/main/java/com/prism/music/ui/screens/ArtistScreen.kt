@@ -466,9 +466,16 @@ private fun Hero(
             Box(
                 Modifier.matchParentSize().clipToBounds()
                     .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(Brush.verticalGradient(0f to Color.Black, (1f - sink / size.height) to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                    .let { mod ->
+                        mod.then(
+                            androidx.compose.ui.draw.drawWithCache {
+                                val mask = Brush.verticalGradient(0f to Color.Black, (1f - sink / size.height) to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+                                onDrawWithContent {
+                                    drawContent()
+                                    drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                                }
+                            }
+                        )
                     },
             ) {
                 Column(

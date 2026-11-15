@@ -287,11 +287,15 @@ class ReleaseRadar(private val c: AppContainer) {
             return kind to year
         }
 
+        private val NORM_BRACKETS_REGEX = Regex("""\s*[(\[][^)\]]*[)\]]""")
+        private val NORM_DASH_TAG_REGEX = Regex("""\s+-\s+(single|ep)$""")
+        private val NORM_TAG_REGEX = Regex("""\s+(ep|single)$""")
+
         /** A title (or name) to match by: lower case, without bracketed parts, an "EP"/"Single" tag, or punctuation. */
         fun norm(s: String): String = s.lowercase()
-            .replace(Regex("""\s*[(\[][^)\]]*[)\]]"""), "")
-            .replace(Regex("""\s+-\s+(single|ep)$"""), "")
-            .replace(Regex("""\s+(ep|single)$"""), "")
+            .replace(NORM_BRACKETS_REGEX, "")
+            .replace(NORM_DASH_TAG_REGEX, "")
+            .replace(NORM_TAG_REGEX, "")
             .filter { it.isLetterOrDigit() }
 
         /**

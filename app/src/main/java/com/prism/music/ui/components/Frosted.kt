@@ -347,6 +347,8 @@ internal fun ambientTintTone(dark: Boolean, tint: Color, strength: Float): Color
     return ColorFilter.colorMatrix(tone)
 }
 
+private val FrostedLayerPaint = androidx.compose.ui.graphics.Paint()
+
 /**
  * [FrostedBackdrop]'s drawing (without its grain), apart so it can be drawn in tests. The hero's blurred picture, its
  * foot running on down the page, and the picture's colors ([ArtPalette.field]) settling in below that.
@@ -392,7 +394,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFrostedBackdro
                     // On whole pixels, so the layer's edge doesn't show as a line.
                     val bandTop = kotlin.math.floor(heroBottom - band).coerceAtLeast(0f)
                     val area = androidx.compose.ui.geometry.Rect(0f, bandTop, kotlin.math.ceil(w), kotlin.math.ceil(heroBottom))
-                    drawContext.canvas.saveLayer(area, androidx.compose.ui.graphics.Paint())
+                    drawContext.canvas.saveLayer(area, FrostedLayerPaint)
                     drawImage(
                         img, IntOffset(sx, sy), srcSize, IntOffset(0, imgTop.roundToInt()), IntSize(w.roundToInt(), heroPx.roundToInt()),
                         alpha = shown, colorFilter = toned, filterQuality = FilterQuality.Low,
@@ -533,9 +535,16 @@ fun TopScrollEdge(visible: () -> Float, bar: Dp = 0.dp) {
 
 /** Fades the bottom of whatever it's on to nothing, from [start] (0–1 down the height) to the foot. */
 fun Modifier.dissolveBottom(start: Float = 0.5f): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
-        drawContent()
-        drawRect(Brush.verticalGradient(0f to Color.Black, start to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+    .let { mod ->
+        mod.then(
+            androidx.compose.ui.draw.drawWithCache {
+                val mask = Brush.verticalGradient(0f to Color.Black, start to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+                onDrawWithContent {
+                    drawContent()
+                    drawRect(mask, blendMode = BlendMode.DstIn)
+                }
+            }
+        )
     }
 
 /** The see-through fill of frosted panels and buttons on a frosted page. */
@@ -575,6 +584,8 @@ fun FrostedPanel(
 @Composable
 fun ScrollEdge(visible: () -> Float, height: Dp, pageHeight: Dp, backdrop: @Composable (Modifier) -> Unit) {
     if (pageHeight <= 0.dp) return
+    val shown by remember(visible) { androidx.compose.runtime.derivedStateOf { visible() > 0.001f } }
+    if (!shown) return
     Box(
         Modifier.fillMaxWidth().height(height).graphicsLayer { alpha = visible() }.clipToBounds().dissolveBottom(0.62f),
         contentAlignment = Alignment.TopStart,

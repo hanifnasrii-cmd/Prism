@@ -314,7 +314,8 @@ fun ScreenBackdrop(screen: BackdropScreen, content: @Composable BoxScope.() -> U
     val motion = s.backdropMotion && !s.reduceMotion
     val frosted = ambientFrostShown(s, LocalIsDark.current)
     val density = LocalDensity.current
-    var height by remember { mutableStateOf(0.dp) }
+    val initialHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+    var height by remember { mutableStateOf(initialHeight) }
     val draw: @Composable (Modifier) -> Unit = { m ->
         when {
             solid != null -> Box(m.fillMaxSize().drawBehind { drawSolid(solid) })
@@ -324,7 +325,10 @@ fun ScreenBackdrop(screen: BackdropScreen, content: @Composable BoxScope.() -> U
         }
     }
     val page = remember(style, photo, frosted, height, s.backdropDim, motion) { PageBackdrop(height, draw) }
-    Box(Modifier.fillMaxSize().onSizeChanged { height = with(density) { it.height.toDp() } }) {
+    Box(Modifier.fillMaxSize().onSizeChanged {
+        val h = with(density) { it.height.toDp() }
+        if (height != h) height = h
+    }) {
         // The frost only changes with the song, so it's kept as a picture in a layer: drawn afresh, its gradients and grain
         // over the whole screen cost a Galaxy A16's GPU about 15 ms of every frame, even a blinking cursor's (#355).
         if (style != Backdrop.DEFAULT) draw(Modifier.fillMaxSize())
@@ -513,6 +517,8 @@ private fun Pattern(kind: BackdropKind, dark: Boolean, motion: Boolean, glow: Fl
     Canvas(Modifier.fillMaxSize().background(bg)) { drawPattern(kind, bg, accent, second, dark, t.value, density, glow) }
 }
 
+private val WavePatternPath = androidx.compose.ui.graphics.Path()
+
 /** One simple design, drawn plainly (tests render it to an image). */
 internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPattern(
     kind: BackdropKind, bg: Color, accent: Color, second: Color, dark: Boolean, t: Float, density: Float, glow: Float = 1f,
@@ -564,26 +570,27 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPattern(
             BackdropKind.WAVES -> {
                 // Three soft bands rolling along the foot of the page, plus thin echoes at the top.
                 val phase = t * 2 * PI.toFloat()
+                val path = WavePatternPath
                 listOf(Triple(accent, 0.70f, 0f), Triple(second, 0.78f, 1.7f), Triple(accent, 0.86f, 3.4f)).forEachIndexed { i, (color, at, shift) ->
-                    val path = androidx.compose.ui.graphics.Path().apply {
-                        moveTo(0f, h)
-                        var x = 0f
-                        while (x <= w + 4f) {
-                            lineTo(x, h * at + sin(x / w * 2 * PI.toFloat() * 1.2f + phase + shift) * h * 0.03f)
-                            x += 4f
-                        }
-                        lineTo(w, h)
-                        close()
+                    path.reset()
+                    path.moveTo(0f, h)
+                    var x = 0f
+                    while (x <= w + 4f) {
+                        path.lineTo(x, h * at + sin(x / w * 2 * PI.toFloat() * 1.2f + phase + shift) * h * 0.03f)
+                        x += 4f
                     }
+                    path.lineTo(w, h)
+                    path.close()
                     drawPath(path, color.copy(alpha = (if (dark) 0.14f else 0.12f) + i * 0.03f))
                 }
+                val waveStroke = androidx.compose.ui.graphics.drawscope.Stroke(stroke)
                 for (k in 0 until 4) {
-                    val path = androidx.compose.ui.graphics.Path()
+                    path.reset()
                     var x = 0f
                     val y0 = h * (0.08f + k * 0.035f)
                     path.moveTo(0f, y0)
                     while (x <= w + 4f) { path.lineTo(x, y0 + sin(x / w * 2 * PI.toFloat() + phase + k * 0.6f) * h * 0.012f); x += 4f }
-                    drawPath(path, ink.copy(alpha = ink.alpha * (1f - k * 0.2f)), style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                    drawPath(path, ink.copy(alpha = ink.alpha * (1f - k * 0.2f)), style = waveStroke)
                 }
             }
             BackdropKind.RIPPLES -> {

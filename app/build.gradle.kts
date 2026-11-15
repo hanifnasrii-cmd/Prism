@@ -167,6 +167,10 @@ ksp {
     arg("room.generateKotlin", "true")
 }
 
+composeCompiler {
+    stabilityConfigurationFiles.add(project.layout.projectDirectory.file("compose-stability.conf"))
+}
+
 // The builds :baselineprofile makes from release (benchmarkRelease, nonMinifiedRelease) can be traced and profiled from
 // adb, as the side-by-side test copy can; the real release can't.
 androidComponents {
