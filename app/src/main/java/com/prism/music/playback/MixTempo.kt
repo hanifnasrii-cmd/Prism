@@ -317,9 +317,11 @@ class MixTempo(
     /** One song at a time: decoding a whole song is the heaviest thing Prism does in the background. */
     private val lock = Mutex()
 
-    private val tempoCache = ConcurrentHashMap<String, java.util.Optional<Tempo>>()
-    private val keyCache = ConcurrentHashMap<String, java.util.Optional<MusicKey>>()
-    private val quickCache = ConcurrentHashMap<String, java.util.Optional<Triple<Double, Double, Float?>>>()
+    private class RawEntry<T>(val raw: String, val value: T?)
+
+    private val tempoCache = ConcurrentHashMap<String, RawEntry<Tempo>>()
+    private val keyCache = ConcurrentHashMap<String, RawEntry<MusicKey>>()
+    private val quickCache = ConcurrentHashMap<String, RawEntry<Triple<Double, Double, Float?>>>()
     @Volatile private var cachedMeasuredIds: Set<String>? = null
 
     /** Forgets what was measured of [id] (another version of it plays now), so it's measured again. */
@@ -350,9 +352,13 @@ class MixTempo(
         return com.prism.music.data.SongTraits(id, tempo, key(id), lufs, Energy.of(lufs, tempo?.confidence, null), whole = false)
     }
 
-    fun cached(id: String): Tempo? = tempoCache.getOrPut(id) {
-        java.util.Optional.ofNullable(prefs.getString(id, null)?.let(Tempo::decode))
-    }.orElse(null)
+    fun cached(id: String): Tempo? {
+        val raw = prefs.getString(id, null) ?: return null
+        tempoCache[id]?.let { if (it.raw == raw) return it.value }
+        val decoded = Tempo.decode(raw)
+        tempoCache[id] = RawEntry(raw, decoded)
+        return decoded
+    }
 
     /** How many songs have been measured so far, whole or by a quick scan: what a calm ↔ energetic radio has to go by. */
     fun measuredCount(): Int = measuredIds().size
@@ -367,9 +373,13 @@ class MixTempo(
     private fun noPeak(id: String) = loudness(id) != null && !peakPrefs.contains(id)
 
     /** The song's key once it's been scanned for one (null for none clear, or not scanned yet). */
-    fun key(id: String): MusicKey? = keyCache.getOrPut(id) {
-        java.util.Optional.ofNullable(keyPrefs.getString(id, null)?.let(MusicKey::decode))
-    }.orElse(null)
+    fun key(id: String): MusicKey? {
+        val raw = keyPrefs.getString(id, null) ?: return null
+        keyCache[id]?.let { if (it.raw == raw) return it.value }
+        val decoded = MusicKey.decode(raw)
+        keyCache[id] = RawEntry(raw, decoded)
+        return decoded
+    }
 
     /** Scanned for its key by the current [KeyDetector] (with or without a clear answer). */
     fun keyed(id: String) = keyPrefs.getString(id, null)?.let { it.startsWith("${MusicKey.VERSION}|") || it == "none:${MusicKey.VERSION}" } == true
@@ -388,6 +398,28 @@ class MixTempo(
     /** A few quick scans at once (each is a third of a song, at background priority); separate from the full scans. */
     private val quickGate = kotlinx.coroutines.sync.Semaphore(QUICK_AT_ONCE)
 
+    // Strong references: Android SharedPreferences keeps listeners in a WeakHashMap.
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, id ->
+        if (id == null) tempoCache.clear() else tempoCache.remove(id)
+    }
+    private val keyPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, id ->
+        if (id == null) keyCache.clear() else keyCache.remove(id)
+    }
+    private val quickPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, id ->
+        cachedMeasuredIds = null
+        if (id == null) quickCache.clear() else quickCache.remove(id)
+    }
+    private val loudPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        cachedMeasuredIds = null
+    }
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        keyPrefs.registerOnSharedPreferenceChangeListener(keyPrefsListener)
+        quickPrefs.registerOnSharedPreferenceChangeListener(quickPrefsListener)
+        loudPrefs.registerOnSharedPreferenceChangeListener(loudPrefsListener)
+    }
+
     enum class QuickResult { KEYED, NEEDS_NETWORK, FAILED }
 
     /** The tempo DJ mode goes by: the full scan's when it's steady, else the quick scan's when that's steady. */
@@ -396,13 +428,16 @@ class MixTempo(
     /** The loudness DJ mode goes by (its energy): measured whole, else from the quick scan. */
     fun djLoudness(id: String): Float? = loudness(id) ?: quick(id)?.third
 
-    private fun quick(id: String): Triple<Double, Double, Float?>? = quickCache.getOrPut(id) {
-        val parsed = quickPrefs.getString(id, null)?.split('|')?.let { p ->
+    private fun quick(id: String): Triple<Double, Double, Float?>? {
+        val raw = quickPrefs.getString(id, null) ?: return null
+        quickCache[id]?.let { if (it.raw == raw) return it.value }
+        val parsed = raw.split('|').let { p ->
             val bpm = p.getOrNull(0)?.toDoubleOrNull() ?: return@let null
             Triple(bpm, p.getOrNull(1)?.toDoubleOrNull() ?: 0.0, p.getOrNull(2)?.toFloatOrNull()?.takeIf { !it.isNaN() })
         }
-        java.util.Optional.ofNullable(parsed)
-    }.orElse(null)
+        quickCache[id] = RawEntry(raw, parsed)
+        return parsed
+    }
 
     /**
      * DJ mode's look at a song: its key, tempo and loudness from three stretches of it ([QuickScan]), fetched by range
@@ -436,10 +471,12 @@ class MixTempo(
                 AudioDiagnostics.log("background", "DJ quick scan of $id started")
                 try {
                     val (r, bytes) = BackgroundBudget.asJob(scheduled) { quickRead(id, network) } ?: return@withContext QuickResult.NEEDS_NETWORK
-                    keyPrefs.edit().putString(id, r.key?.encode() ?: "none:${MusicKey.VERSION}").apply()
-                    quickPrefs.edit().putString(id, "${r.tempo?.bpm ?: 0.0}|${r.tempo?.confidence ?: 0.0}|${r.lufs ?: Float.NaN}").apply()
-                    keyCache[id] = java.util.Optional.ofNullable(r.key)
-                    quickCache[id] = java.util.Optional.of(Triple(r.tempo?.bpm ?: 0.0, r.tempo?.confidence ?: 0.0, r.lufs))
+                    val encodedKey = r.key?.encode() ?: "none:${MusicKey.VERSION}"
+                    val encodedQuick = "${r.tempo?.bpm ?: 0.0}|${r.tempo?.confidence ?: 0.0}|${r.lufs ?: Float.NaN}"
+                    keyPrefs.edit().putString(id, encodedKey).apply()
+                    quickPrefs.edit().putString(id, encodedQuick).apply()
+                    keyCache[id] = RawEntry(encodedKey, r.key)
+                    quickCache[id] = RawEntry(encodedQuick, Triple(r.tempo?.bpm ?: 0.0, r.tempo?.confidence ?: 0.0, r.lufs))
                     cachedMeasuredIds = null
                     traits?.record(com.prism.music.data.SongTraits(id, r.tempo, r.key, r.lufs, Energy.of(r.lufs, r.tempo?.confidence, r.brightness), whole = false))
                     Log.i(
@@ -528,12 +565,14 @@ class MixTempo(
                     r.isFailure -> { failed += id; cached(id) }
                     s == null -> cached(id) // not on the phone, and no network for it now
                     else -> {
-                        prefs.edit().putString(id, s.tempo?.encode() ?: "none").apply()
+                        val encodedTempo = s.tempo?.encode() ?: "none"
+                        val encodedKey = s.key?.encode() ?: "none:${MusicKey.VERSION}"
+                        prefs.edit().putString(id, encodedTempo).apply()
                         loudPrefs.edit().putFloat(id, s.lufs ?: Float.NaN).apply()
                         peakPrefs.edit().putFloat(id, s.peakDb ?: Float.NaN).apply()
-                        keyPrefs.edit().putString(id, s.key?.encode() ?: "none:${MusicKey.VERSION}").apply()
-                        tempoCache[id] = java.util.Optional.ofNullable(s.tempo)
-                        keyCache[id] = java.util.Optional.ofNullable(s.key)
+                        keyPrefs.edit().putString(id, encodedKey).apply()
+                        tempoCache[id] = RawEntry(encodedTempo, s.tempo)
+                        keyCache[id] = RawEntry(encodedKey, s.key)
                         cachedMeasuredIds = null
                         traits?.record(com.prism.music.data.SongTraits(id, s.tempo, s.key, s.lufs, Energy.of(s.lufs, s.tempo?.confidence, s.brightness), whole = true))
                         val ms = (System.nanoTime() - started) / 1_000_000
