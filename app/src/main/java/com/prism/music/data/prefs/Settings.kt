@@ -2934,13 +2934,13 @@ class SettingsRepository(
     private val initialStored: AppSettings = read(raw)
 
     /** The settings as the listener set them (Settings shows these: Performance mode doesn't change a switch). */
-    val stored: StateFlow<AppSettings> = context.dataStore.data.map { raw = it; read(it) }.stateIn(scope, SharingStarted.Eagerly, initialStored)
+    val stored: StateFlow<AppSettings> = context.dataStore.data.map { read(it) }.stateIn(scope, SharingStarted.Eagerly, initialStored)
 
     /**
      * The settings as Prism uses them: with Performance mode on, its lighter look in place of the listener's heavier
      * choices ([AppSettings.effective]). The choices themselves are [stored], unchanged.
      */
-    val flow: StateFlow<AppSettings> = stored.map { it.effective() }.stateIn(
+    val flow: StateFlow<AppSettings> = context.dataStore.data.map { raw = it; read(it).effective() }.stateIn(
         scope, SharingStarted.Eagerly, initialStored.effective()
     )
 

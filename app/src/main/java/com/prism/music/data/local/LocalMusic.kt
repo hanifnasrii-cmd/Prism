@@ -93,7 +93,7 @@ class LocalMusic(
 
     suspend fun scan() = scanning.withLock { scanNow() }
 
-    private val albumArt = java.util.concurrent.ConcurrentHashMap<Long, java.util.Optional<String>>()
+    private val albumArt = java.util.concurrent.ConcurrentHashMap<Long, String>()
 
     private suspend fun scanNow() = withContext(Dispatchers.IO) {
         if (!hasPermission()) { _scanned.value = false; return@withContext }
@@ -119,11 +119,15 @@ class LocalMusic(
             "(${MediaStore.Audio.Media.DURATION} >= ? OR ${MediaStore.Audio.Media.DURATION} IS NULL OR ${MediaStore.Audio.Media.DURATION} = 0)"
         // Whether each album has artwork, looked at once per album (asking for art that isn't there fails every time the
         // notification or a list asks, so songs without any get none).
-        fun artFor(albumId: Long): String? = if (albumId <= 0) null else albumArt.getOrPut(albumId) {
+        val noArt = HashSet<Long>()
+        fun artFor(albumId: Long): String? {
+            if (albumId <= 0 || albumId in noArt) return null
+            albumArt[albumId]?.let { return it }
             val uri = "content://media/external/audio/albumart/$albumId"
             val found = uri.takeIf { runCatching { context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.close() != null }.getOrDefault(false) }
-            java.util.Optional.ofNullable(found)
-        }.orElse(null)
+            if (found != null) albumArt[albumId] = found else noArt.add(albumId)
+            return found
+        }
         runCatching {
             context.contentResolver.query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, selection, arrayOf(MIN_DURATION_MS.toString()),
