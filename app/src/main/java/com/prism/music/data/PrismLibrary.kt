@@ -261,44 +261,54 @@ class PrismLibrary(private val dir: File) {
         lib.copy(lists = listOf(changed) + lib.lists.filterNot { it.id == id })
     }
 
-    @Synchronized
     private fun change(f: (PrismLibraryFile) -> PrismLibraryFile) {
-        data.update(f)
-        val snapshot = data.value
-        _lists.value = snapshot.lists
-        _albums.value = snapshot.albums
-        _playlists.value = snapshot.playlists
-        _folders.value = snapshot.folders
-        if (android.os.Looper.getMainLooper()?.isCurrentThread == true) {
+        val snapshot: PrismLibraryFile
+        val job: kotlinx.coroutines.Job
+        synchronized(this) {
+            data.update(f)
+            snapshot = data.value
+            _lists.value = snapshot.lists
+            _albums.value = snapshot.albums
+            _playlists.value = snapshot.playlists
+            _folders.value = snapshot.folders
             val prev = pendingWrites[file]
-            pendingWrites[file] = ioScope.launch {
+            job = ioScope.launch {
                 prev?.join()
                 write(snapshot)
             }
-        } else {
-            pendingWrites.remove(file)?.let { kotlinx.coroutines.runBlocking { it.join() } }
-            write(snapshot)
+            pendingWrites[file] = job
+            job.invokeOnCompletion { pendingWrites.remove(file, job) }
+        }
+        if (android.os.Looper.getMainLooper()?.isCurrentThread != true) {
+            kotlinx.coroutines.runBlocking { job.join() }
         }
     }
 
     private fun read(): PrismLibraryFile = runCatching {
-        pendingWrites.remove(file)?.let { kotlinx.coroutines.runBlocking { it.join() } }
-        if (!file.isFile) PrismLibraryFile()
-        else InnerTube.json.decodeFromString(PrismLibraryFile.serializer(), file.readText())
+        pendingWrites[file]?.let { kotlinx.coroutines.runBlocking { it.join() } }
+        synchronized(fileLock) {
+            if (!file.isFile) PrismLibraryFile()
+            else InnerTube.json.decodeFromString(PrismLibraryFile.serializer(), file.readText())
+        }
     }.getOrElse { PrismLibraryFile() }
 
-    @Synchronized
     private fun write(lib: PrismLibraryFile) {
-        runCatching {
-            dir.mkdirs()
-            val tmp = File(dir, "prism.json.tmp")
-            tmp.writeText(InnerTube.json.encodeToString(PrismLibraryFile.serializer(), lib))
-            if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+        synchronized(fileLock) {
+            runCatching {
+                dir.mkdirs()
+                val tmp = File(dir, "prism.json.tmp")
+                tmp.writeText(InnerTube.json.encodeToString(PrismLibraryFile.serializer(), lib))
+                if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+            }
         }
     }
 
     companion object {
-        private val ioScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        private val ioScope = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1)
+        )
+        private val fileLock = Any()
         private val pendingWrites = java.util.concurrent.ConcurrentHashMap<File, kotlinx.coroutines.Job>()
         /** Prism playlists' ids start with this. */
         const val PREFIX = "prism:"

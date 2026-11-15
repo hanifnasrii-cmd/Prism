@@ -517,7 +517,12 @@ private fun Pattern(kind: BackdropKind, dark: Boolean, motion: Boolean, glow: Fl
     Canvas(Modifier.fillMaxSize().background(bg)) { drawPattern(kind, bg, accent, second, dark, t.value, density, glow) }
 }
 
-private val WavePatternPath = androidx.compose.ui.graphics.Path()
+private val wavePatternPathLocal = object : ThreadLocal<androidx.compose.ui.graphics.Path>() {
+    override fun initialValue() = androidx.compose.ui.graphics.Path()
+}
+
+private fun wavePatternPath(): androidx.compose.ui.graphics.Path =
+    wavePatternPathLocal.get() ?: androidx.compose.ui.graphics.Path().also { wavePatternPathLocal.set(it) }
 
 /** One simple design, drawn plainly (tests render it to an image). */
 internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPattern(
@@ -570,7 +575,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPattern(
             BackdropKind.WAVES -> {
                 // Three soft bands rolling along the foot of the page, plus thin echoes at the top.
                 val phase = t * 2 * PI.toFloat()
-                val path = WavePatternPath
+                val path = wavePatternPath()
                 listOf(Triple(accent, 0.70f, 0f), Triple(second, 0.78f, 1.7f), Triple(accent, 0.86f, 3.4f)).forEachIndexed { i, (color, at, shift) ->
                     path.reset()
                     path.moveTo(0f, h)

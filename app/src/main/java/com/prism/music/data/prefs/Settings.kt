@@ -2488,6 +2488,7 @@ class SettingsRepository(
     }
 
     private val defaultSettings = AppSettings()
+    private val defaultParts = PlayerParts()
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, def: E): E =
         this[key]?.let { v -> kotlin.enums.enumEntries<E>().firstOrNull { it.name == v } } ?: def
@@ -3594,7 +3595,6 @@ class SettingsRepository(
     }
 
     // 1.8.0 player editor
-    private val defaultParts = PlayerParts()
 
     /** A comma-separated set of names (unknown ones skipped): a Look or backup from a later Prism still opens. */
     private inline fun <reified E : Enum<E>> namesOf(v: String?): List<E> =

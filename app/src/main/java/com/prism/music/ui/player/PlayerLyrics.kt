@@ -1242,16 +1242,18 @@ fun LyricsPanel(
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
-                if (fadeMask.height != size.height || fadeMask.brush == null) {
+                val fadeBrush = fadeMask.brush?.takeIf { fadeMask.height == size.height } ?: Brush.verticalGradient(
+                    0f to Color.Transparent, 0.06f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height
+                ).also {
                     fadeMask.height = size.height
-                    fadeMask.brush = Brush.verticalGradient(0f to Color.Transparent, 0.06f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+                    fadeMask.brush = it
                 }
-                drawRect(fadeMask.brush!!, blendMode = BlendMode.DstIn)
+                drawRect(fadeBrush, blendMode = BlendMode.DstIn)
             },
         // Lower down, room for the last line to settle (lifted, #341, it needs a little more than the rest of the page).
         contentPadding = PaddingValues(top = settleAt, bottom = if (look.position == 0f) 400.dp else maxOf(400.dp, maxHeight)),
     ) {
-        itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+        itemsIndexed(lines, key = { index, _ -> "line:$index" }) { index, line ->
             if (!synced && line.text.startsWith("[") && line.text.endsWith("]")) {
                 Box(Modifier.padding(top = if (index == 0) 6.dp else 24.dp, bottom = 8.dp)) {
                     Text(

@@ -510,7 +510,10 @@ fun HomeScreen(bottomPadding: androidx.compose.ui.unit.Dp) {
                                     contentPadding = PaddingValues(horizontal = 16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    items(m, key = { it.id + it.params }) { mood -> MoodTile(mood, Modifier.width(150.dp).height(68.dp)) { openItem(mood) } }
+                                    items(m.size, key = { index -> "${m[index].id}:${m[index].params}:$index" }) { index ->
+                                        val mood = m[index]
+                                        MoodTile(mood, Modifier.width(150.dp).height(68.dp)) { openItem(mood) }
+                                    }
                                 }
                             }
                         }

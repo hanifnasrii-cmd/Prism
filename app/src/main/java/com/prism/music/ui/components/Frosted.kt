@@ -348,7 +348,12 @@ internal fun ambientTintTone(dark: Boolean, tint: Color, strength: Float): Color
     return ColorFilter.colorMatrix(tone)
 }
 
-private val FrostedLayerPaint = androidx.compose.ui.graphics.Paint()
+private val frostedLayerPaintLocal = object : ThreadLocal<androidx.compose.ui.graphics.Paint>() {
+    override fun initialValue() = androidx.compose.ui.graphics.Paint()
+}
+
+private fun frostedLayerPaint(): androidx.compose.ui.graphics.Paint =
+    frostedLayerPaintLocal.get() ?: androidx.compose.ui.graphics.Paint().also { frostedLayerPaintLocal.set(it) }
 
 /**
  * [FrostedBackdrop]'s drawing (without its grain), apart so it can be drawn in tests. The hero's blurred picture, its
@@ -395,7 +400,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFrostedBackdro
                     // On whole pixels, so the layer's edge doesn't show as a line.
                     val bandTop = kotlin.math.floor(heroBottom - band).coerceAtLeast(0f)
                     val area = androidx.compose.ui.geometry.Rect(0f, bandTop, kotlin.math.ceil(w), kotlin.math.ceil(heroBottom))
-                    drawContext.canvas.saveLayer(area, FrostedLayerPaint)
+                    drawContext.canvas.saveLayer(area, frostedLayerPaint())
                     drawImage(
                         img, IntOffset(sx, sy), srcSize, IntOffset(0, imgTop.roundToInt()), IntSize(w.roundToInt(), heroPx.roundToInt()),
                         alpha = shown, colorFilter = toned, filterQuality = FilterQuality.Low,
