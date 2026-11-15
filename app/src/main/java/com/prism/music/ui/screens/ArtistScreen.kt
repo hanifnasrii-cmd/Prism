@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -466,16 +467,12 @@ private fun Hero(
             Box(
                 Modifier.matchParentSize().clipToBounds()
                     .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
-                    .let { mod ->
-                        mod.then(
-                            androidx.compose.ui.draw.drawWithCache {
-                                val mask = Brush.verticalGradient(0f to Color.Black, (1f - sink / size.height) to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
-                                onDrawWithContent {
-                                    drawContent()
-                                    drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-                                }
-                            }
-                        )
+                    .drawWithCache {
+                        val mask = Brush.verticalGradient(0f to Color.Black, (1f - sink / size.height) to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+                        onDrawWithContent {
+                            drawContent()
+                            drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                        }
                     },
             ) {
                 Column(

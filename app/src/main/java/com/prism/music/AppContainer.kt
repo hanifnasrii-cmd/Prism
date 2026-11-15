@@ -977,7 +977,7 @@ class AppContainer(val app: Application) {
      */
     fun yieldToPlaying(id: String?) {
         // Called as a song changes: the player's "loading" reaches this side a moment after the change itself.
-        if (player.buffering.value || !player.isPlaying.value || player.positionMs.value < 2_000L) {
+        if (player.buffering.value || !player.isPlaying.value || player.position < 2_000L) {
             Thread.sleep(250)
         }
         val until = android.os.SystemClock.elapsedRealtime() + YIELD_MS

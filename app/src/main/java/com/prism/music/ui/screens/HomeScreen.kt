@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.graphicsLayer
@@ -688,16 +689,12 @@ private fun HomeTopBar() {
                 header, settings.homeHeaderPicture,
                 Modifier.matchParentSize()
                     .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
-                    .let { mod ->
-                        mod.then(
-                            androidx.compose.ui.draw.drawWithCache {
-                                val mask = Brush.verticalGradient(0.45f to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
-                                onDrawWithContent {
-                                    drawContent()
-                                    drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-                                }
-                            }
-                        )
+                    .drawWithCache {
+                        val mask = Brush.verticalGradient(0.45f to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+                        onDrawWithContent {
+                            drawContent()
+                            drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                        }
                     },
             )
             Box(Modifier.align(Alignment.BottomStart)) { HomeTopRow(greeting, today, showGreeting = true) }
@@ -869,53 +866,54 @@ private fun GreetingSection(cfg: HomeSectionConfig, recent: List<Song>) {
     /** [playable]: what holding the tile offers to play (null for pages like Replay or Search). */
     data class Tile(val title: String, val icon: ImageVector?, val image: String?, val playable: Playable?, val onClick: () -> Unit)
     val prismLists by c.prismLibrary.lists.collectAsState()
-    val customCovers by c.covers.changes.collectAsState()
-    val tiles = remember(settings.homeShortcuts, settings.homePlaylists, settings.homeRecentTiles, prismLists, recent, customCovers) {
-        buildList {
-            settings.homeShortcuts.forEach { sc ->
-                val (icon, route) = when (sc) {
-                    HomeShortcut.LIKED -> PrismIcons.HeartFilled to Routes.liked()
-                    HomeShortcut.DOWNLOADS -> PrismIcons.DownloadDone to Routes.DOWNLOADS
-                    HomeShortcut.REPLAY -> PrismIcons.History to Routes.REPLAY
-                    HomeShortcut.LIBRARY -> PrismIcons.LibraryFilled to Routes.LIBRARY
-                    HomeShortcut.MOODS -> PrismIcons.Mood to Routes.MOODS
-                    HomeShortcut.SEARCH -> PrismIcons.Search to Routes.SEARCH
-                    HomeShortcut.EQUALIZER -> PrismIcons.Equalizer to Routes.EQ
-                    HomeShortcut.TOGETHER -> PrismIcons.Groups to Routes.TOGETHER
+    val tiles by remember(settings.homeShortcuts, settings.homePlaylists, settings.homeRecentTiles, prismLists, recent) {
+        androidx.compose.runtime.derivedStateOf {
+            buildList {
+                settings.homeShortcuts.forEach { sc ->
+                    val (icon, route) = when (sc) {
+                        HomeShortcut.LIKED -> PrismIcons.HeartFilled to Routes.liked()
+                        HomeShortcut.DOWNLOADS -> PrismIcons.DownloadDone to Routes.DOWNLOADS
+                        HomeShortcut.REPLAY -> PrismIcons.History to Routes.REPLAY
+                        HomeShortcut.LIBRARY -> PrismIcons.LibraryFilled to Routes.LIBRARY
+                        HomeShortcut.MOODS -> PrismIcons.Mood to Routes.MOODS
+                        HomeShortcut.SEARCH -> PrismIcons.Search to Routes.SEARCH
+                        HomeShortcut.EQUALIZER -> PrismIcons.Equalizer to Routes.EQ
+                        HomeShortcut.TOGETHER -> PrismIcons.Groups to Routes.TOGETHER
+                    }
+                    val playable = when (sc) {
+                        HomeShortcut.LIKED -> Playable.Liked
+                        HomeShortcut.DOWNLOADS -> Playable.Downloads
+                        else -> null
+                    }
+                    add(Tile(sc.label, icon, null, playable) { nav.go(route) })
                 }
-                val playable = when (sc) {
-                    HomeShortcut.LIKED -> Playable.Liked
-                    HomeShortcut.DOWNLOADS -> Playable.Downloads
-                    else -> null
+                settings.homePlaylists.forEach { pin ->
+                    val prism = pin.id.startsWith(com.prism.music.data.PrismLibrary.PREFIX)
+                    // A deleted Prism playlist's pin has nothing to open.
+                    if (prism && prismLists.none { it.id == pin.id }) return@forEach
+                    // A Prism playlist shows its current name and cover (it changes on the phone; the pin keeps a copy).
+                    val pl = prismLists.firstOrNull { it.id == pin.id }?.item()?.let { pin.copy(title = it.title, thumbnail = it.thumbnail ?: pin.thumbnail) } ?: pin
+                    val art = c.covers.art(pl.id, pl.thumbnail)
+                    add(Tile(pl.title, null, art, Playable.Of(PlaylistItem(pl.id, pl.title, tr(R.string.playlist), art))) { nav.go(Routes.playlist(pl.id)) })
                 }
-                add(Tile(sc.label, icon, null, playable) { nav.go(route) })
-            }
-            settings.homePlaylists.forEach { pin ->
-                val prism = pin.id.startsWith(com.prism.music.data.PrismLibrary.PREFIX)
-                // A deleted Prism playlist's pin has nothing to open.
-                if (prism && prismLists.none { it.id == pin.id }) return@forEach
-                // A Prism playlist shows its current name and cover (it changes on the phone; the pin keeps a copy).
-                val pl = prismLists.firstOrNull { it.id == pin.id }?.item()?.let { pin.copy(title = it.title, thumbnail = it.thumbnail ?: pin.thumbnail) } ?: pin
-                val art = c.covers.art(pl.id, pl.thumbnail)
-                add(Tile(pl.title, null, art, Playable.Of(PlaylistItem(pl.id, pl.title, tr(R.string.playlist), art))) { nav.go(Routes.playlist(pl.id)) })
-            }
-            // One tile per album: by its id, or (music files on the phone have no album id) by its title and artist.
-            recent.distinctBy { s -> s.album?.id ?: s.album?.title?.takeIf { it.isNotBlank() }?.let { "t:${it.lowercase()}|${s.primaryArtist.lowercase()}" } ?: s.id }
-                .take(settings.homeRecentTiles).forEach { s ->
-                    val album = s.album?.id?.let { AlbumItem(it, s.album.title, s.primaryArtist, s.thumbnail) }
-                    add(Tile(s.album?.title ?: s.title, null, s.thumbnail, Playable.Of(album ?: SongItem(s))) {
-                        when {
-                            album != null -> nav.go(Routes.album(album.id))
-                            // A file's album: its songs on the phone, in order.
-                            s.isLocal && s.album?.title != null -> {
-                                val songs = c.localMusic.tracks.value.map { it.song }.filter { it.album?.title == s.album.title && it.primaryArtist == s.primaryArtist }
-                                if (songs.size > 1) c.player.playQueue(songs, songs.indexOfFirst { it.id == s.id }.coerceAtLeast(0), com.prism.music.playback.QueueSource(com.prism.music.playback.QueueKind.ALBUM, s.album.title))
-                                else c.player.playSingle(s)
+                // One tile per album: by its id, or (music files on the phone have no album id) by its title and artist.
+                recent.distinctBy { s -> s.album?.id ?: s.album?.title?.takeIf { it.isNotBlank() }?.let { "t:${it.lowercase()}|${s.primaryArtist.lowercase()}" } ?: s.id }
+                    .take(settings.homeRecentTiles).forEach { s ->
+                        val album = s.album?.id?.let { AlbumItem(it, s.album.title, s.primaryArtist, s.thumbnail) }
+                        add(Tile(s.album?.title ?: s.title, null, s.thumbnail, Playable.Of(album ?: SongItem(s))) {
+                            when {
+                                album != null -> nav.go(Routes.album(album.id))
+                                // A file's album: its songs on the phone, in order.
+                                s.isLocal && s.album?.title != null -> {
+                                    val songs = c.localMusic.tracks.value.map { it.song }.filter { it.album?.title == s.album.title && it.primaryArtist == s.primaryArtist }
+                                    if (songs.size > 1) c.player.playQueue(songs, songs.indexOfFirst { it.id == s.id }.coerceAtLeast(0), com.prism.music.playback.QueueSource(com.prism.music.playback.QueueKind.ALBUM, s.album.title))
+                                    else c.player.playSingle(s)
+                                }
+                                else -> c.player.playSingle(s)
                             }
-                            else -> c.player.playSingle(s)
-                        }
-                    })
-                }
+                        })
+                    }
+            }
         }
     }
     val menu = rememberPlayMenu()

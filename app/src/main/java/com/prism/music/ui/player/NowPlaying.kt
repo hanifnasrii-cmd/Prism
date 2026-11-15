@@ -912,7 +912,7 @@ fun NowPlayingScreen(onCollapse: () -> Unit) {
             // Darkened under the type: lighter while the controls are away, stronger under the lyrics and the queue.
             val video = clip.clip != null
             Box(Modifier.fillMaxSize().testTag("canvasScrim").drawBehind {
-                val s = canvasScrim(ctl(), fullBlur, video)
+                val s = canvasScrim(ctl(), fullBlurState.value, video)
                 drawRect(Brush.verticalGradient(0f to Color.Black.copy(alpha = s[0]), 0.5f to Color.Black.copy(alpha = s[1]), 1f to Color.Black.copy(alpha = s[2])))
             })
         }

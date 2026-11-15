@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -535,16 +536,12 @@ fun TopScrollEdge(visible: () -> Float, bar: Dp = 0.dp) {
 
 /** Fades the bottom of whatever it's on to nothing, from [start] (0–1 down the height) to the foot. */
 fun Modifier.dissolveBottom(start: Float = 0.5f): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .let { mod ->
-        mod.then(
-            androidx.compose.ui.draw.drawWithCache {
-                val mask = Brush.verticalGradient(0f to Color.Black, start to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
-                onDrawWithContent {
-                    drawContent()
-                    drawRect(mask, blendMode = BlendMode.DstIn)
-                }
-            }
-        )
+    .drawWithCache {
+        val mask = Brush.verticalGradient(0f to Color.Black, start to Color.Black, 1f to Color.Transparent, startY = 0f, endY = size.height)
+        onDrawWithContent {
+            drawContent()
+            drawRect(mask, blendMode = BlendMode.DstIn)
+        }
     }
 
 /** The see-through fill of frosted panels and buttons on a frosted page. */
